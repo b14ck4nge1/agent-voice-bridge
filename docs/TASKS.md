@@ -50,7 +50,7 @@ that marked them done.
 | PS-01 | SIP over TLS + SDES-SRTP | P0 | PB-02 | DONE | TLS+SRTP call test, forged RTP dropped | `sip/srtp.py`, `tests/integration/test_sip_server.py` |
 | PS-02 | Docker/Caddy deployment + Ubuntu install script | P0 | PS-01 | TESTING | Runs on user's Ubuntu 26.04 server | `deploy/` |
 | PS-03 | PC connection script + test-approval command | P0 | PS-02 | TESTING | `Decision: allow` on user's PC | `scripts/setup-pc-remote.ps1`, `admin.py` |
-| HW-04 | Real iPhone via server: Bark → Linphone TLS/SRTP call → approve | P0 | PS-03 | BLOCKED (AWAITING USER) | Works on cellular | docs/server-setup.md |
+| HW-04 | Real iPhone via server: Bark → Linphone TLS/SRTP call → approve | P0 | PS-03 | IN PROGRESS | Works on cellular | User report 2026-10-20: TLS register, Bark, tap-to-call, audio and keypad worked on one call; docs/server-setup.md |
 
 ## Phase 2: approval bridge
 

@@ -5,9 +5,13 @@ Last updated: 2026-10-20 (session 1, part 2: phone path).
 ## Summary
 
 Phase 0 (research) is complete. Phases 2, 3 and parts of 4 and 5 are implemented
-and tested in software. **No phone call has been made.** The project's main risk,
-whether a free Linphone setup rings a locked iPhone with two-way audio across
-networks, is untested and waits on you: [HW-01](docs/hardware-tests/HW-01-linphone-push.md).
+and tested in software. **First real-device result (2026-10-20, user report):** on the
+server deployment (`deploy/`, AWS EC2 + Caddy), Linphone iOS registers over TLS, a
+Bark notification arrives, and tapping it placed a TLS/SRTP call where the prompts
+were audible and the keypad worked. Not every attempt connected: one earlier tap
+gave "wrong user/pass" (most likely a stale second Linphone account). Not yet
+tested: locked-phone ringing, cellular, repeated calls, and a real Claude Code or
+Codex request.
 
 ## Completed (with evidence)
 
@@ -75,7 +79,7 @@ sip.linphone.org), should wait for HW-01's result.
 
 | ID | Blocker | Needs |
 |---|---|---|
-| HW-03 | Real iPhone: Bark → tap → Linphone calls PC over Tailscale, audio + keypad | You: run `scripts/setup-phone.ps1`, then `avb-admin phone-test` (~20 min) |
+| HW-04 | Server path: partly passed (one call: audio + keypad OK). Still needs repeat calls, locked phone, cellular | You: repeat `avb-admin test-approval`, report failures with the bridge log |
 | HW-01 | (Only for the Linphone-account path) | A sip.linphone.org account, which couldn't be created |
 | CC-04 | Hook inside real Claude Code on Windows | You: run the quick start, try approve/reject/timeout |
 | CX-04 | Hook inside real Codex CLI and the VS Code extension | You: same, plus trusting the hook in Codex |

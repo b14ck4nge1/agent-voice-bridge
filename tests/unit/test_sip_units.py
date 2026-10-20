@@ -55,6 +55,7 @@ def test_response_copies_dialog_headers_and_adds_tag() -> None:
         b"INVITE sip:x SIP/2.0\r\nnocolon\r\n\r\n",
         b"X" * 70000,
     ],
+    ids=["empty", "not-sip", "bad-version", "bad-status", "no-colon", "too-large"],
 )
 def test_parse_rejects_garbage(bad: bytes) -> None:
     with pytest.raises(SipParseError):

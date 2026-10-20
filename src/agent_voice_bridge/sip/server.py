@@ -21,7 +21,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from agent_voice_bridge.sip import sdp
-from agent_voice_bridge.sip.digest import DigestAuthenticator
+from agent_voice_bridge.sip.digest import DigestAuthenticator, parse_auth
 from agent_voice_bridge.sip.message import (
     SipMessage,
     SipParseError,
@@ -351,7 +351,20 @@ class SipServer:
             return True
         if header and not stale:
             self._failures.setdefault(peer.addr[0], []).append(time.time())
-            log.warning("SIP auth failure from %s", peer.addr[0])
+            p = parse_auth(header)
+            log.warning(
+                "SIP auth failure from %s: username=%r realm=%r algorithm=%r (expected %r, %r)",
+                peer.addr[0],
+                p.get("username"),
+                p.get("realm"),
+                p.get("algorithm", "MD5"),
+                self.config.username,
+                self.config.realm,
+            )
+        elif not header:
+            log.info(
+                "SIP %s from %s without credentials: sending challenge", msg.method, peer.addr[0]
+            )
         self._reply(
             peer,
             msg,

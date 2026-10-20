@@ -97,6 +97,7 @@ async def test_sha256_digest(server: tuple[SipServer, Recorder]) -> None:
     srv, _ = server
     phone = TestPhone("127.0.0.1", srv.config.port, "phone", PASSWORD)
     await phone.connect()
+    srv.auth.challenge_algorithms = ("MD5", "SHA-256")  # opt-in; default offers MD5 only
     assert await phone.register(algorithm="SHA-256") == 200
     phone.close()
 

@@ -15,7 +15,7 @@ import secrets
 import time
 
 NONCE_TTL = 300
-ALGORITHMS = {"SHA-256": hashlib.sha256, "MD5": hashlib.md5}
+ALGORITHMS = {"MD5": hashlib.md5, "SHA-256": hashlib.sha256}
 
 _KV = re.compile(r'(\w+)\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^\s,]+))')
 
@@ -87,12 +87,16 @@ class DigestAuthenticator:
             return False
         return None if self._now() - issued > NONCE_TTL else True
 
+    # Challenge with MD5 only by default: some clients (seen with Linphone iOS) take the
+    # first challenge and can't answer SHA-256 with a saved password. Both are verified.
+    challenge_algorithms: tuple[str, ...] = ("MD5",)
+
     def challenges(self, *, stale: bool = False) -> list[str]:
         nonce = self.new_nonce()
         extra = ", stale=true" if stale else ""
         return [
             f'Digest realm="{self.realm}", nonce="{nonce}", algorithm={alg}, qop="auth"{extra}'
-            for alg in ALGORITHMS
+            for alg in self.challenge_algorithms
         ]
 
     def verify(self, header: str | None, method: str) -> tuple[bool, bool]:

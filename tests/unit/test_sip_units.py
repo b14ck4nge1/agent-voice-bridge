@@ -141,6 +141,11 @@ def test_digest_expired_nonce_is_stale() -> None:
     assert all("stale=true" in c for c in auth.challenges(stale=True))
 
 
+def test_default_challenge_is_md5_only() -> None:
+    challenges = DigestAuthenticator("r", "phone", "secret-password-123").challenges()
+    assert len(challenges) == 1 and "algorithm=MD5" in challenges[0]
+
+
 OFFER = (
     "v=0\r\no=- 1 1 IN IP4 10.0.0.2\r\ns=-\r\nc=IN IP4 10.0.0.2\r\nt=0 0\r\n"
     "m=audio 7078 RTP/AVP 96 8 0 101\r\na=rtpmap:96 opus/48000/2\r\na=rtpmap:101 telephone-event/8000\r\n"

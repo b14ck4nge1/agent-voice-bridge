@@ -185,6 +185,9 @@ def make_brain(system: str, tools: list[Tool]) -> Brain:
     if provider == "anthropic":
         import anthropic
 
+        if base_url:  # the SDK adds /v1/messages itself; accept URLs copied from docs
+            base_url = base_url.rstrip("/").removesuffix("/messages").removesuffix("/v1")
+
         client: Any = anthropic.AsyncAnthropic(api_key=api_key, base_url=base_url)
         return AnthropicBrain(system, tools, model=model or "claude-haiku-4-5", client=client)
     if provider == "openai":

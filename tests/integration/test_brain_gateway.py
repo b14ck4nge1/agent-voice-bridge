@@ -94,7 +94,10 @@ async def test_brain_via_gateway(
     pytest.importorskip(provider)
     monkeypatch.setenv("AVB_BRAIN", provider)
     monkeypatch.setenv("AVB_BRAIN_MODEL", "claude-haiku-4-5")
-    monkeypatch.setenv("AVB_BRAIN_BASE_URL", gateway + ("/v1" if provider == "openai" else ""))
+    # As copied from the gateway's docs: ".../v1" for OpenAI, ".../v1/messages" for Anthropic.
+    monkeypatch.setenv(
+        "AVB_BRAIN_BASE_URL", gateway + ("/v1" if provider == "openai" else "/v1/messages")
+    )
     monkeypatch.setenv("AVB_BRAIN_API_KEY", "sk-gateway-key")
     assert await brain_test() == 0
     assert SEEN[0]["path"] == ("/v1/chat/completions" if provider == "openai" else "/v1/messages")

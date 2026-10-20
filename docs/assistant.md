@@ -25,9 +25,11 @@ With the assistant on, the call is a conversation instead of a keypad menu:
 
 ## Setup
 
-**Server** (once): get an API key, either from an API gateway (such as api-models.com:
-use the base URL from its docs, model names as usual, e.g. `claude-haiku-4-5`) or
-directly from <https://console.anthropic.com> or OpenAI. Note that a gateway sees
+**Server** (once): get an API key, either from an API gateway or directly from
+<https://console.anthropic.com> or OpenAI. For **API Models** (api-models.com) choose
+option 1 in the setup: Claude models (`claude-haiku-4-5`) go through its Anthropic API
+(`https://api-models.com`), others (`gpt-5.6-sol`) through its OpenAI API
+(`https://api-models.com/v1`). Its prices are in CNY; give the key a low quota to start. Note that a gateway sees
 everything the brain sees: what you say on the call, the requests your agents make,
 and task reports. Then
 

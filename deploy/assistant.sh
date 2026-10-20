@@ -28,22 +28,28 @@ case "${1:-}" in
     MEM_MB=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
     echo "Server memory: ${MEM_MB} MB (Whisper large-v3-turbo needs about 2 GB free)."
     echo "How to reach the model:"
-    echo "  1) An API gateway with an OpenAI-style API (e.g. https://api-models.com/v1)"
-    echo "  2) An API gateway with an Anthropic-style API"
-    echo "  3) Anthropic directly (console.anthropic.com)   4) OpenAI directly"
-    read -r -p "Choose 1-4 [1]: " B
-    case "${B:-1}" in
-      1|4) set_var AVB_BRAIN openai ;;
-      *)   set_var AVB_BRAIN anthropic ;;
-    esac
+    echo "  1) API Models gateway (api-models.com)  - URL filled in for you"
+    echo "  2) Another gateway with an OpenAI-style API"
+    echo "  3) Another gateway with an Anthropic-style API"
+    echo "  4) Anthropic directly (console.anthropic.com)   5) OpenAI directly"
+    read -r -p "Choose 1-5 [1]: " B
+    B="${B:-1}"
+    read -r -p "Model [claude-haiku-4-5] (e.g. gpt-5.6-sol): " M
+    M="${M:-claude-haiku-4-5}"
     URL=""
-    if [[ "${B:-1}" == 1 || "${B:-1}" == 2 ]]; then
-      read -r -p "Gateway base URL (from its docs, e.g. https://api-models.com/v1): " URL
-      [[ -n "$URL" ]] || { echo "a base URL is needed" >&2; exit 2; }
-    fi
+    case "$B" in
+      1) # Claude models over the gateway's Anthropic API, others over its OpenAI API.
+         if [[ "$M" == claude-* ]]; then PROTO=anthropic; URL=https://api-models.com
+         else PROTO=openai; URL=https://api-models.com/v1; fi ;;
+      2) PROTO=openai; read -r -p "Gateway base URL (e.g. https://example.com/v1): " URL ;;
+      3) PROTO=anthropic; read -r -p "Gateway base URL (e.g. https://example.com): " URL ;;
+      4) PROTO=anthropic ;;
+      *) PROTO=openai ;;
+    esac
+    if [[ "$B" == 2 || "$B" == 3 ]] && [[ -z "$URL" ]]; then echo "a base URL is needed" >&2; exit 2; fi
+    set_var AVB_BRAIN "$PROTO"
     set_var AVB_BRAIN_BASE_URL "$URL"
-    read -r -p "Model [claude-haiku-4-5]: " M
-    set_var AVB_BRAIN_MODEL "${M:-claude-haiku-4-5}"
+    set_var AVB_BRAIN_MODEL "$M"
     read -r -s -p "API key: " K; echo
     [[ -n "$K" ]] || { echo "an API key is needed" >&2; exit 2; }
     set_var AVB_BRAIN_API_KEY "$K"

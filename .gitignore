@@ -1,0 +1,23 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Secrets and local state: never commit
+.env
+*.env
+!.env.example
+bridge.env
+hook.env
+*.sqlite3
+*.sqlite3-*
+*.avb-backup-*
+*.avb-tmp

@@ -15,6 +15,7 @@ import logging
 import secrets
 import socket
 import ssl
+import sys
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -151,18 +152,24 @@ class SipServer:
             ctx.load_cert_chain(self.config.tls_cert, self.config.tls_key)
             self._tls_ctx = ctx
 
+            # On 3.12+ handshake explicitly so failures (wrong name, old TLS, scanners) are
+            # logged; 3.11's StreamWriter.start_tls can't act as a server.
+            explicit = sys.version_info >= (3, 12)
+
             async def on_tls(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-                # Handshake explicitly so failures (wrong name, old TLS, scanners) are logged.
-                peer = writer.get_extra_info("peername")
-                try:
-                    await asyncio.wait_for(writer.start_tls(ctx), 15)
-                except (ssl.SSLError, OSError, TimeoutError) as exc:
-                    log.warning("TLS handshake with %s failed: %s", peer, exc)
-                    writer.close()
-                    return
+                if explicit:
+                    peer = writer.get_extra_info("peername")
+                    try:
+                        await asyncio.wait_for(writer.start_tls(ctx), 15)
+                    except (ssl.SSLError, OSError, TimeoutError) as exc:
+                        log.warning("TLS handshake with %s failed: %s", peer, exc)
+                        writer.close()
+                        return
                 await self._on_tcp(reader, writer, kind="tls")
 
-            self._tls = await asyncio.start_server(on_tls, host, self.config.tls_port)
+            self._tls = await asyncio.start_server(
+                on_tls, host, self.config.tls_port, ssl=None if explicit else ctx
+            )
             reload = loop.create_task(self._reload_cert())
             self._tasks.add(reload)
         log.info(

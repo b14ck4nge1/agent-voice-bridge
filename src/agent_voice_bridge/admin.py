@@ -166,6 +166,12 @@ def cmd_test_approval(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_stt_test(_: argparse.Namespace) -> int:
+    from agent_voice_bridge.assistant.stt import stt_test
+
+    return asyncio.run(stt_test())
+
+
 def cmd_brain_test(_: argparse.Namespace) -> int:
     from agent_voice_bridge.assistant.brain import brain_test
 
@@ -218,6 +224,9 @@ def main(argv: list[str] | None = None) -> None:
 
     p = sub.add_parser("brain-test", help="Check the assistant's LLM settings (incl. tool calls)")
     p.set_defaults(func=cmd_brain_test)
+
+    p = sub.add_parser("stt-test", help="Check speech recognition with a spoken test sentence")
+    p.set_defaults(func=cmd_stt_test)
 
     args = parser.parse_args(argv)
     if getattr(args, "wait_seconds", 0) >= install.HOOK_TIMEOUT_SECONDS:

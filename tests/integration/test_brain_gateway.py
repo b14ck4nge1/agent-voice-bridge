@@ -20,7 +20,17 @@ class Gateway(BaseHTTPRequestHandler):
         pass
 
     def do_POST(self) -> None:  # noqa: N802
-        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        raw = self.rfile.read(int(self.headers["Content-Length"]))
+        if self.path.endswith("/audio/transcriptions"):
+            SEEN.append({"path": self.path, "auth": self.headers.get("Authorization"), "raw": raw})
+            data = json.dumps({"text": "approve the request"}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
+        body = json.loads(raw)
         SEEN.append(
             {
                 "path": self.path,
@@ -103,3 +113,19 @@ async def test_brain_via_gateway(
     assert SEEN[0]["path"] == ("/v1/chat/completions" if provider == "openai" else "/v1/messages")
     assert "sk-gateway-key" in SEEN[0]["auth"]
     assert SEEN[0]["body"]["model"] == "claude-haiku-4-5"
+
+
+async def test_speech_to_text_via_gateway(gateway: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("openai")
+    from agent_voice_bridge.assistant.stt import ApiSTT
+
+    # Defaults to the brain's gateway and key when the brain uses the OpenAI style.
+    monkeypatch.setenv("AVB_BRAIN", "openai")
+    monkeypatch.setenv("AVB_BRAIN_BASE_URL", gateway + "/v1")
+    monkeypatch.setenv("AVB_BRAIN_API_KEY", "sk-gateway-key")
+    stt = ApiSTT(language="en")
+    assert await stt.transcribe(b"\x00\x01" * 8000) == "approve the request"
+    req = SEEN[-1]
+    assert req["path"] == "/v1/audio/transcriptions" and "sk-gateway-key" in req["auth"]
+    raw = req["raw"]
+    assert b"gpt-4o-mini-transcribe" in raw and b"RIFF" in raw and b"Claude Code" in raw

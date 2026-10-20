@@ -7,7 +7,9 @@ AVB_BRAIN                  ``anthropic`` (default) or ``openai``
 AVB_BRAIN_MODEL            Default ``claude-haiku-4-5`` / ``gpt-5.6-sol``
 ANTHROPIC_API_KEY          For ``anthropic``
 OPENAI_API_KEY             For ``openai``
-AVB_STT_MODEL              faster-whisper model, default ``large-v3-turbo``
+AVB_STT                    ``local`` (faster-whisper, default) or ``api`` (online service)
+AVB_STT_MODEL              local: default ``large-v3-turbo``; api: ``gpt-4o-mini-transcribe``
+AVB_STT_BASE_URL / _KEY    api: service URL and key (default: the brain's gateway)
 AVB_STT_LANGUAGE           e.g. ``en`` or ``fa``; default: detect
 AVB_ASSISTANT_LANGUAGE     Language the assistant answers in (default English)
 AVB_TTS                    ``piper`` (default when installed) or ``espeak``
@@ -28,7 +30,7 @@ from typing import Any, Protocol
 from agent_voice_bridge.approvals.service import ApprovalService
 from agent_voice_bridge.assistant.brain import Brain, Tool, make_brain
 from agent_voice_bridge.assistant.session import AssistantSession, CallHub
-from agent_voice_bridge.assistant.stt import SpeechToText, WhisperSTT
+from agent_voice_bridge.assistant.stt import SpeechToText, make_stt
 from agent_voice_bridge.assistant.worker_hub import WorkerHub
 from agent_voice_bridge.models import ApprovalView
 from agent_voice_bridge.sip.adapter.base import CallDispatcher
@@ -75,7 +77,7 @@ class AssistantRuntime:
         language: str | None = None,
         call_on_task_done: bool | None = None,
     ) -> None:
-        self.stt = stt or WhisperSTT()
+        self.stt = stt or make_stt()
         self.tts = tts or make_tts()
         self.brain_factory = brain_factory or make_brain
         self.worker = worker if worker is not None else WorkerHub()

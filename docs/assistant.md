@@ -40,8 +40,12 @@ sudo bash deploy/assistant.sh test      # checks the model answers and makes too
 sudo docker compose -f deploy/docker-compose.yml logs -f bridge   # wait for the model to load
 ```
 
-The first build adds about 1 GB to the image and the first start downloads the Whisper
-model (about 1.6 GB). large-v3-turbo needs about 2 GB of free memory; on a smaller server
+Speech-to-text: choose the **online service** (option 1) unless you want everything on
+your server. It sends each sentence you say to `/v1/audio/transcriptions` (API Models,
+OpenAI, or another compatible service; default model `gpt-4o-mini-transcribe`), which is
+much faster and more accurate than Whisper on a small CPU. `sudo bash deploy/assistant.sh
+test` checks it with a spoken test sentence. With local Whisper, the first start downloads
+the model (about 1.6 GB). large-v3-turbo needs about 2 GB of free memory; on a smaller server
 choose `small`.
 
 The Caddyfile now also exposes `/v1/worker/*` (agent token required) for the PC helper,

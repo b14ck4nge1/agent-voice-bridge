@@ -53,9 +53,22 @@ case "${1:-}" in
     read -r -s -p "API key: " K; echo
     [[ -n "$K" ]] || { echo "an API key is needed" >&2; exit 2; }
     set_var AVB_BRAIN_API_KEY "$K"
-    DEFAULT_STT=large-v3-turbo; (( MEM_MB < 3000 )) && DEFAULT_STT=small
-    read -r -p "Whisper model [${DEFAULT_STT}] (large-v3-turbo, small, base): " S
-    set_var AVB_STT_MODEL "${S:-$DEFAULT_STT}"
+    echo "Speech-to-text: 1) online service (fast, accurate; recommended)   2) Whisper on this server"
+    read -r -p "Choose 1 or 2 [1]: " T
+    if [[ "${T:-1}" == 2 ]]; then
+      DEFAULT_STT=large-v3-turbo; (( MEM_MB < 3000 )) && DEFAULT_STT=small
+      read -r -p "Whisper model [${DEFAULT_STT}] (large-v3-turbo, small, base): " S
+      set_var AVB_STT local; set_var AVB_STT_MODEL "${S:-$DEFAULT_STT}"
+      set_var AVB_STT_BASE_URL ""; set_var AVB_STT_API_KEY ""
+    else
+      read -r -p "Speech-to-text model [gpt-4o-mini-transcribe] (check the gateway's catalog): " S
+      set_var AVB_STT api; set_var AVB_STT_MODEL "${S:-gpt-4o-mini-transcribe}"
+      SURL="https://api-models.com/v1"; [[ "$B" == 2 || "$B" == 5 ]] && SURL="${URL:-https://api.openai.com/v1}"
+      read -r -p "Speech-to-text API URL [$SURL]: " SU
+      set_var AVB_STT_BASE_URL "${SU:-$SURL}"
+      read -r -s -p "Its API key [Enter = same key as above]: " SK; echo
+      set_var AVB_STT_API_KEY "${SK:-$K}"
+    fi
     read -r -p "Language you'll speak, e.g. en or fa (empty = detect): " L
     set_var AVB_STT_LANGUAGE "${L:-}"
     set_var AVB_ASSISTANT 1
@@ -64,12 +77,16 @@ case "${1:-}" in
     sleep 5
     docker compose --env-file "$ENV" exec bridge avb-admin brain-test || \
       echo "The model check failed: see above. Fix with: sudo bash deploy/assistant.sh setup"
+    echo "Checking speech-to-text..."
+    docker compose --env-file "$ENV" exec bridge avb-admin stt-test || \
+      echo "The speech-to-text check failed: see above."
     echo "Done. Watch it load: sudo docker compose logs -f bridge"
     ;;
   off)
     set_var AVB_ASSISTANT 0; restart ;;
   test)
-    docker compose --env-file "$ENV" exec bridge avb-admin brain-test ;;
+    docker compose --env-file "$ENV" exec bridge avb-admin brain-test
+    docker compose --env-file "$ENV" exec bridge avb-admin stt-test ;;
   status)
     echo "Assistant: $(get_var AVB_ASSISTANT) brain=$(get_var AVB_BRAIN) model=$(get_var AVB_BRAIN_MODEL) stt=$(get_var AVB_STT_MODEL)" ;;
   *)

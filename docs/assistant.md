@@ -25,11 +25,16 @@ With the assistant on, the call is a conversation instead of a keypad menu:
 
 ## Setup
 
-**Server** (once): get an API key from <https://console.anthropic.com> (or OpenAI), then
+**Server** (once): get an API key, either from an API gateway (such as api-models.com:
+use the base URL from its docs, model names as usual, e.g. `claude-haiku-4-5`) or
+directly from <https://console.anthropic.com> or OpenAI. Note that a gateway sees
+everything the brain sees: what you say on the call, the requests your agents make,
+and task reports. Then
 
 ```bash
 cd ~/agent-voice-bridge && git pull
-sudo bash deploy/assistant.sh setup     # brain, API key, Whisper model, language
+sudo bash deploy/assistant.sh setup     # gateway URL, model, API key, Whisper model, language
+sudo bash deploy/assistant.sh test      # checks the model answers and makes tool calls
 sudo docker compose -f deploy/docker-compose.yml logs -f bridge   # wait for the model to load
 ```
 

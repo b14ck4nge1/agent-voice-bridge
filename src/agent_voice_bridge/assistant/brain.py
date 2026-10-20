@@ -7,6 +7,11 @@ Two providers, chosen with ``AVB_BRAIN``:
 * ``openai`` - an OpenAI chat model, ``AVB_BRAIN_MODEL`` (e.g. ``gpt-5.6-sol``), key
   ``OPENAI_API_KEY``.
 
+To go through an API gateway instead (one that offers the Anthropic Messages API or the
+OpenAI Chat Completions API), set ``AVB_BRAIN_BASE_URL`` (e.g. ``https://gateway/v1``
+for OpenAI-style) and ``AVB_BRAIN_API_KEY``. ``avb-admin brain-test`` checks it works,
+tool calls included.
+
 The brain only *talks*. Anything with consequences (approving, starting a task) goes
 through tools whose effect the code confirms with you itself - the model can't approve.
 """
@@ -175,8 +180,52 @@ class OpenAIBrain:
 def make_brain(system: str, tools: list[Tool]) -> Brain:
     provider = (os.environ.get("AVB_BRAIN") or "anthropic").strip().lower()
     model = (os.environ.get("AVB_BRAIN_MODEL") or "").strip()
+    base_url = (os.environ.get("AVB_BRAIN_BASE_URL") or "").strip() or None
+    api_key = (os.environ.get("AVB_BRAIN_API_KEY") or "").strip() or None
     if provider == "anthropic":
-        return AnthropicBrain(system, tools, model=model or "claude-haiku-4-5")
+        import anthropic
+
+        client: Any = anthropic.AsyncAnthropic(api_key=api_key, base_url=base_url)
+        return AnthropicBrain(system, tools, model=model or "claude-haiku-4-5", client=client)
     if provider == "openai":
-        return OpenAIBrain(system, tools, model=model or "gpt-5.6-sol")
+        import openai
+
+        client = openai.AsyncOpenAI(api_key=api_key, base_url=base_url)
+        return OpenAIBrain(system, tools, model=model or "gpt-5.6-sol", client=client)
     raise ValueError("AVB_BRAIN must be anthropic or openai")
+
+
+async def brain_test() -> int:
+    """``avb-admin brain-test``: one question that needs a tool call, through the settings."""
+    called: list[dict[str, Any]] = []
+
+    async def clock(args: dict[str, Any]) -> str:
+        called.append(args)
+        return "It is 10:42 in the morning."
+
+    tools = [
+        Tool(
+            "get_time",
+            "The current local time.",
+            {"type": "object", "properties": {}, "additionalProperties": False},
+            clock,
+        )
+    ]
+    provider = os.environ.get("AVB_BRAIN") or "anthropic"
+    print(
+        f"Brain: {provider}, model {os.environ.get('AVB_BRAIN_MODEL') or '(default)'}, "
+        f"via {os.environ.get('AVB_BRAIN_BASE_URL') or 'the official API'}"
+    )
+    try:
+        brain = make_brain("You are a phone assistant. Answer in one short sentence.", tools)
+        reply = await brain.respond("What time is it? Use the get_time tool.")
+    except Exception as exc:
+        print(f"FAILED: {type(exc).__name__}: {exc}")
+        return 1
+    print(f"Reply: {reply!r}")
+    print(f"Tool call: {'yes' if called else 'NO'}")
+    if not called:
+        print("The model answered without calling the tool; the assistant needs tool calls.")
+        return 1
+    print("OK")
+    return 0

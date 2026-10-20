@@ -166,6 +166,12 @@ def cmd_test_approval(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_brain_test(_: argparse.Namespace) -> int:
+    from agent_voice_bridge.assistant.brain import brain_test
+
+    return asyncio.run(brain_test())
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="avb-admin")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -209,6 +215,9 @@ def main(argv: list[str] | None = None) -> None:
     )
     p.add_argument("--seconds", type=int, default=180)
     p.set_defaults(func=cmd_test_approval)
+
+    p = sub.add_parser("brain-test", help="Check the assistant's LLM settings (incl. tool calls)")
+    p.set_defaults(func=cmd_brain_test)
 
     args = parser.parse_args(argv)
     if getattr(args, "wait_seconds", 0) >= install.HOOK_TIMEOUT_SECONDS:

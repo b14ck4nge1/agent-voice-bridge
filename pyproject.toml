@@ -78,5 +78,5 @@ mypy_path = "src"
 packages = ["agent_voice_bridge"]
 
 [[tool.mypy.overrides]]
-module = ["faster_whisper", "faster_whisper.*", "piper", "piper.*"]
+module = ["faster_whisper", "faster_whisper.*", "piper", "piper.*", "anthropic", "anthropic.*", "openai", "openai.*", "numpy", "numpy.*"]
 ignore_missing_imports = true

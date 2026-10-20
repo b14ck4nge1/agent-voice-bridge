@@ -44,7 +44,7 @@ Follow SETUP-DETAILS.txt:
 * **Bark**: nothing to configure by default (no encryption, so it works alongside
   other services that use Bark). For encrypted notifications, install with
   `sudo AVB_BARK_ENCRYPT=1 bash .../install.sh ...` and enter the key it prints.
-* **Linphone**: third-party SIP account `phone`, domain `voice.yourdomain.com:5061`,
+* **Linphone**: third-party SIP account `phone`, domain `voice.yourdomain.com` (no port),
   transport **TLS**, media encryption **SRTP**.
 * Optional: the `otpauth://` line in an authenticator app, for high-risk approvals.
 

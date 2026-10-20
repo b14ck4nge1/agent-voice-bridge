@@ -123,7 +123,7 @@ Allow notifications and Critical Alerts. $BARK_TEXT
 "Use SIP account" (third-party SIP account, NOT a linphone.org account):
   Username:  phone
   Password:  $SIP_PASSWORD
-  Domain:    $DOMAIN:5061
+  Domain:    $DOMAIN   (no port; TLS uses 5061 automatically)
   Transport: TLS
 Account / call settings: Media encryption = SRTP. Push notifications: off.
 

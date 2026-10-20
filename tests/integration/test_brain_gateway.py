@@ -21,6 +21,23 @@ class Gateway(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         raw = self.rfile.read(int(self.headers["Content-Length"]))
+        if ":generateContent" in self.path:
+            SEEN.append(
+                {
+                    "path": self.path,
+                    "auth": self.headers.get("x-goog-api-key"),
+                    "body": json.loads(raw),
+                }
+            )
+            data = json.dumps(
+                {"candidates": [{"content": {"parts": [{"text": " approve the request "}]}}]}
+            ).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
         if self.path.endswith("/audio/transcriptions"):
             SEEN.append({"path": self.path, "auth": self.headers.get("Authorization"), "raw": raw})
             data = json.dumps({"text": "approve the request"}).encode()
@@ -130,3 +147,22 @@ async def test_speech_to_text_via_gateway(gateway: str, monkeypatch: pytest.Monk
     assert req["path"] == "/v1/audio/transcriptions" and "sk-gateway-key" in req["auth"]
     raw = req["raw"]
     assert b"gpt-4o-mini-transcribe" in raw and b"RIFF" in raw and b"Claude Code" in raw
+
+
+async def test_gemini_speech_to_text_via_gateway(
+    gateway: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import base64
+
+    from agent_voice_bridge.assistant.stt import GeminiSTT
+
+    monkeypatch.setenv("AVB_BRAIN_API_KEY", "sk-gateway-key")
+    stt = GeminiSTT(base_url=gateway + "/v1beta")  # a versioned URL is accepted too
+    assert await stt.transcribe(b"\x00\x01" * 8000) == "approve the request"
+    req = SEEN[-1]
+    assert req["path"] == "/v1beta/models/gemini-2.5-flash:generateContent"
+    assert req["auth"] == "sk-gateway-key"
+    parts = req["body"]["contents"][0]["parts"]
+    assert "Transcribe" in parts[0]["text"]
+    assert base64.b64decode(parts[1]["inline_data"]["data"])[:4] == b"RIFF"
+    assert req["body"]["generationConfig"]["thinkingConfig"]["thinkingBudget"] == 0

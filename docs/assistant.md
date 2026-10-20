@@ -40,7 +40,9 @@ sudo bash deploy/assistant.sh test      # checks the model answers and makes too
 sudo docker compose -f deploy/docker-compose.yml logs -f bridge   # wait for the model to load
 ```
 
-Speech-to-text: choose the **online service** (option 1) unless you want everything on
+Speech-to-text: **Gemini** (option 1, `gemini-2.5-flash` through API Models' Gemini API)
+listens to each sentence and writes it down, without "thinking", so it's quick. Option 2
+is any OpenAI-style transcription API. Otherwise: choose the **online service** unless you want everything on
 your server. It sends each sentence you say to `/v1/audio/transcriptions` (API Models,
 OpenAI, or another compatible service; default model `gpt-4o-mini-transcribe`), which is
 much faster and more accurate than Whisper on a small CPU. `sudo bash deploy/assistant.sh

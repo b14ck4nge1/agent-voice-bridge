@@ -53,9 +53,19 @@ case "${1:-}" in
     read -r -s -p "API key: " K; echo
     [[ -n "$K" ]] || { echo "an API key is needed" >&2; exit 2; }
     set_var AVB_BRAIN_API_KEY "$K"
-    echo "Speech-to-text: 1) online service (fast, accurate; recommended)   2) Whisper on this server"
-    read -r -p "Choose 1 or 2 [1]: " T
-    if [[ "${T:-1}" == 2 ]]; then
+    echo "Speech-to-text:"
+    echo "  1) Gemini listens to the audio (gemini-2.5-flash via API Models; recommended)"
+    echo "  2) An OpenAI-style transcription API (whisper-1, gpt-4o-mini-transcribe, ...)"
+    echo "  3) Whisper on this server (slow on a small CPU)"
+    read -r -p "Choose 1-3 [1]: " T
+    if [[ "${T:-1}" == 1 ]]; then
+      read -r -p "Gemini model [gemini-2.5-flash]: " S
+      set_var AVB_STT gemini; set_var AVB_STT_MODEL "${S:-gemini-2.5-flash}"
+      read -r -p "Gemini API host [https://api-models.com]: " SU
+      set_var AVB_STT_BASE_URL "${SU:-https://api-models.com}"
+      read -r -s -p "Its API key [Enter = same key as above]: " SK; echo
+      set_var AVB_STT_API_KEY "${SK:-$K}"
+    elif [[ "${T}" == 3 ]]; then
       DEFAULT_STT=large-v3-turbo; (( MEM_MB < 3000 )) && DEFAULT_STT=small
       read -r -p "Whisper model [${DEFAULT_STT}] (large-v3-turbo, small, base): " S
       set_var AVB_STT local; set_var AVB_STT_MODEL "${S:-$DEFAULT_STT}"

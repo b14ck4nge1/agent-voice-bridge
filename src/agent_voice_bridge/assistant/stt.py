@@ -130,29 +130,106 @@ class ApiSTT:
         self.client = client
 
     async def transcribe(self, pcm16_8k: bytes) -> str:
-        import io
-        import wave
-
-        buf = io.BytesIO()
-        with wave.open(buf, "wb") as w:  # 16 kHz suits every model
-            w.setnchannels(1)
-            w.setsampwidth(2)
-            w.setframerate(16000)
-            w.writeframes(resample(pcm16_8k, 8000, 16000))
         extra: dict[str, Any] = {"prompt": VOCABULARY}
         if self.language:
             extra["language"] = self.language
         result = await self.client.audio.transcriptions.create(
-            model=self.model, file=("speech.wav", buf.getvalue(), "audio/wav"), **extra
+            model=self.model, file=("speech.wav", _wav16k(pcm16_8k), "audio/wav"), **extra
         )
         text = getattr(result, "text", result)
         return str(text or "").strip()
 
 
+def _wav16k(pcm16_8k: bytes) -> bytes:
+    import io
+    import wave
+
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(16000)
+        w.writeframes(resample(pcm16_8k, 8000, 16000))
+    return buf.getvalue()
+
+
+GEMINI_PROMPT = (
+    "Transcribe exactly what the caller says in this phone audio. Output only the "
+    "transcript, in the language spoken, with no quotes or comments. If there is no "
+    "speech, output nothing. Words that may come up: " + VOCABULARY
+)
+
+
+class GeminiSTT:
+    """Speech recognition with a Gemini model (audio understanding), Gemini API format.
+
+    Works with Google's API or a gateway that offers the Gemini protocol (api-models.com:
+    ``/v1beta/models/{model}:generateContent``). Settings: ``AVB_STT_MODEL`` (default
+    ``gemini-2.5-flash``), ``AVB_STT_BASE_URL`` (default ``https://api-models.com``),
+    ``AVB_STT_API_KEY`` (default: the brain's key).
+    """
+
+    def __init__(
+        self,
+        model: str | None = None,
+        *,
+        base_url: str | None = None,
+        api_key: str | None = None,
+        client: Any = None,
+        timeout: float = 20,
+    ) -> None:
+        import httpx
+
+        env = os.environ.get
+        self.model = model or env("AVB_STT_MODEL") or "gemini-2.5-flash"
+        url = (base_url or env("AVB_STT_BASE_URL") or "https://api-models.com").rstrip("/")
+        for tail in ("/v1beta", "/v1"):  # accept the base or a versioned URL
+            url = url.removesuffix(tail)
+        self.base_url = url
+        self.api_key = api_key or env("AVB_STT_API_KEY") or env("AVB_BRAIN_API_KEY") or ""
+        self.client = client or httpx.AsyncClient(timeout=timeout)
+
+    async def transcribe(self, pcm16_8k: bytes) -> str:
+        import base64
+
+        body = {
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [
+                        {"text": GEMINI_PROMPT},
+                        {
+                            "inline_data": {
+                                "mime_type": "audio/wav",
+                                "data": base64.b64encode(_wav16k(pcm16_8k)).decode(),
+                            }
+                        },
+                    ],
+                }
+            ],
+            # No "thinking": a transcript needs none, and every second counts on a call.
+            "generationConfig": {"temperature": 0, "thinkingConfig": {"thinkingBudget": 0}},
+        }
+        resp = await self.client.post(
+            f"{self.base_url}/v1beta/models/{self.model}:generateContent",
+            json=body,
+            headers={"x-goog-api-key": self.api_key},
+        )
+        if resp.status_code >= 400:
+            raise RuntimeError(f"Gemini API {resp.status_code}: {resp.text[:300]}")
+        data = resp.json()
+        parts = (data.get("candidates") or [{}])[0].get("content", {}).get("parts", [])
+        return " ".join(p.get("text", "") for p in parts if isinstance(p, dict)).strip()
+
+
 def make_stt() -> SpeechToText:
-    """``AVB_STT=api`` (online service) or ``local`` (faster-whisper, the default)."""
-    if (os.environ.get("AVB_STT") or "local").strip().lower() == "api":
+    """``AVB_STT``: ``local`` (faster-whisper, default), ``api`` (OpenAI-style
+    transcription API) or ``gemini`` (a Gemini model listens to the audio)."""
+    kind = (os.environ.get("AVB_STT") or "local").strip().lower()
+    if kind == "api":
         return ApiSTT()
+    if kind == "gemini":
+        return GeminiSTT()
     return WhisperSTT()
 
 

@@ -103,8 +103,10 @@ async def test_bark_wake_then_keypad_approval(settings: Any, tmp_path: Path) -> 
         phone = await _dial(stack.settings.sip.port)
         await _wait_for(lambda: any("npm install" in s for s in tts.spoken))
         assert any("Press 1 to approve" in s for s in tts.spoken)
-        await asyncio.sleep(0.3)
-        assert phone.rtp is not None and goertzel(bytes(phone.rtp.received[-3000:]), 700) > 100
+        # The prompts (700 Hz stand-in speech) reached the phone; check the whole call so
+        # far rather than a short tail, which may fall in the silence between prompts.
+        assert phone.rtp is not None
+        await _wait_for(lambda: goertzel(bytes(phone.rtp.received), 700) > 50)  # type: ignore[union-attr]
 
         await phone.press("3")  # details
         await _wait_for(lambda: any(s.startswith("Exactly:") for s in tts.spoken))

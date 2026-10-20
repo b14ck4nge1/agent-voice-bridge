@@ -85,6 +85,6 @@ that marked them done.
 | E2E-01 | Full Claude Code → iPhone → approve → resume | P0 | HW-02, CC-04 | BACKLOG | Real device | – |
 | E2E-02 | Same for Codex | P0 | HW-02, CX-04 | BACKLOG | Real device | – |
 | E2E-03 | Failure matrix (missed, lock screen, network loss, registration loss) | P1 | E2E-01 | BACKLOG | Report | – |
-| WIN-01 | GitHub Actions on Windows + Ubuntu | P1 | – | TESTING | CI green on both | `.github/workflows/ci.yml` |
+| WIN-01 | GitHub Actions on Windows + Ubuntu | P1 | – | DONE | CI green on both | `.github/workflows/ci.yml`; Actions run 39391626629 green on windows/ubuntu × 3.11/3.13 |
 | WIN-02 | install/start/test scripts verified on a personal Windows PC | P1 | – | BLOCKED (AWAITING USER) | Scripts run cleanly | – |
 | REL-01 | License check of dependencies | P2 | – | BACKLOG | Table in docs | – |

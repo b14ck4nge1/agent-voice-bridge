@@ -30,8 +30,11 @@ networks, is untested and waits on you: [HW-01](docs/hardware-tests/HW-01-linpho
   `avb-voice-sim` (piped: answer, "what command?", "will that delete anything?",
   "approve it", "yes") → the hook printed
   `{"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": {"behavior": "allow"}}}`.
-* **Not run:** Windows (CI is configured but hasn't run on GitHub yet), a real
-  Claude Code or Codex session, any SIP call, any iPhone test.
+* GitHub Actions on PR #1 (commit `bcd7081`): lint, mypy and the full test suite
+  **passed on `windows-latest` and `ubuntu-latest`, Python 3.11 and 3.13** (run
+  39391626629).
+* **Not run:** the PowerShell scripts on a personal Windows PC, a real Claude Code
+  or Codex session, any SIP call, any iPhone test.
 
 ## Current work
 

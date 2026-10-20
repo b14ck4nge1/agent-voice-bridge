@@ -1,7 +1,7 @@
 # Windows setup
 
-The test suite is set up to run in GitHub Actions on `windows-latest` as well as
-Ubuntu (see PROJECT_STATUS.md for the latest result). The scripts below have **not
+The test suite passes in GitHub Actions on `windows-latest` (Python 3.11 and 3.13)
+as well as Ubuntu. The scripts below have **not
 yet been run on a personal Windows 10/11 machine**; task WIN-02 tracks that.
 
 ## Requirements

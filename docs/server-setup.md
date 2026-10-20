@@ -20,9 +20,17 @@ If your provider has a firewall in its web panel, also allow: TCP 22, 80, 443,
 ## 2. Install on the server (Ubuntu 24.04 / 26.04)
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/b14ck4nge1/agent-voice-bridge/claude/phase0-bridge-mvp/deploy/install.sh
-sudo bash install.sh voice.yourdomain.com YOUR_BARK_DEVICE_KEY
+git clone --branch claude/phase0-bridge-mvp https://github.com/b14ck4nge1/agent-voice-bridge.git
+sudo bash agent-voice-bridge/deploy/install.sh voice.yourdomain.com YOUR_BARK_DEVICE_KEY
 ```
+
+If the repository is private, `git clone` asks for a username and password. Use your
+GitHub username and a **read-only token** as the password: GitHub → Settings →
+Developer settings → Fine-grained tokens → Generate, repository access *only this
+repository*, permission *Contents: Read-only*.
+
+On AWS EC2 (and similar), also open the same ports in the instance's **Security
+Group** inbound rules: TCP 22, 80, 443, 5061 and UDP 40000-40200.
 
 The Bark device key is in the Bark app: the part after `https://api.day.app/` in its
 example URL. The script installs Docker, opens the firewall (keeping SSH open),

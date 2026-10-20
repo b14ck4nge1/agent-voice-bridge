@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Install Agent Voice Bridge on an Ubuntu server (tested target: Ubuntu 24.04+/26.04).
 #
-#   curl -fsSLO https://raw.githubusercontent.com/b14ck4nge1/agent-voice-bridge/claude/phase0-bridge-mvp/deploy/install.sh
-#   sudo bash install.sh voice.example.com YOUR_BARK_DEVICE_KEY
+#   git clone --branch claude/phase0-bridge-mvp https://github.com/b14ck4nge1/agent-voice-bridge.git
+#   sudo bash agent-voice-bridge/deploy/install.sh voice.example.com YOUR_BARK_DEVICE_KEY
+# (private repo: clone with a read-only GitHub token, see docs/server-setup.md)
 #
 # Installs Docker, opens the firewall (SSH, 80/443, SIP-TLS 5061, RTP 40000-40200/udp),
 # generates secrets, starts Caddy (HTTPS) + the bridge, and writes SETUP-DETAILS.txt
@@ -12,7 +13,13 @@ set -euo pipefail
 DOMAIN="${1:-}"
 BARK_KEY="${2:-}"
 BRANCH="${AVB_BRANCH:-claude/phase0-bridge-mvp}"
-DIR=/opt/agent-voice-bridge
+# Run from a checkout (e.g. a private repo you cloned yourself) to use it in place.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "$SCRIPT_DIR/../pyproject.toml" ]]; then
+  DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+else
+  DIR=/opt/agent-voice-bridge
+fi
 
 if [[ -z "$DOMAIN" || -z "$BARK_KEY" ]]; then
   echo "usage: sudo bash install.sh <domain, e.g. voice.example.com> <Bark device key>" >&2
@@ -51,7 +58,7 @@ ufw --force enable >/dev/null
 
 echo "== Fetching code"
 if [[ -d "$DIR/.git" ]]; then
-  git -C "$DIR" fetch -q origin "$BRANCH" && git -C "$DIR" checkout -q "$BRANCH" && git -C "$DIR" pull -q --ff-only
+  git -C "$DIR" pull -q --ff-only || echo "   (could not update; using the code already in $DIR)"
 else
   git clone -q --branch "$BRANCH" https://github.com/b14ck4nge1/agent-voice-bridge.git "$DIR"
 fi

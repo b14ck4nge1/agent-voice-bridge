@@ -18,6 +18,7 @@ through tools whose effect the code confirms with you itself - the model can't a
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -28,6 +29,8 @@ from typing import Any, Protocol
 log = logging.getLogger(__name__)
 
 MAX_TOOL_ROUNDS = 6
+# A caller is waiting on the line: give up (and say so) rather than hang for minutes.
+TIMEOUT = float(os.environ.get("AVB_BRAIN_TIMEOUT", "30"))
 
 
 @dataclass(frozen=True)
@@ -188,12 +191,16 @@ def make_brain(system: str, tools: list[Tool]) -> Brain:
         if base_url:  # the SDK adds /v1/messages itself; accept URLs copied from docs
             base_url = base_url.rstrip("/").removesuffix("/messages").removesuffix("/v1")
 
-        client: Any = anthropic.AsyncAnthropic(api_key=api_key, base_url=base_url)
+        client: Any = anthropic.AsyncAnthropic(
+            api_key=api_key, base_url=base_url, timeout=TIMEOUT, max_retries=1
+        )
         return AnthropicBrain(system, tools, model=model or "claude-haiku-4-5", client=client)
     if provider == "openai":
         import openai
 
-        client = openai.AsyncOpenAI(api_key=api_key, base_url=base_url)
+        client = openai.AsyncOpenAI(
+            api_key=api_key, base_url=base_url, timeout=TIMEOUT, max_retries=1
+        )
         return OpenAIBrain(system, tools, model=model or "gpt-5.6-sol", client=client)
     raise ValueError("AVB_BRAIN must be anthropic or openai")
 
@@ -221,11 +228,13 @@ async def brain_test() -> int:
     )
     try:
         brain = make_brain("You are a phone assistant. Answer in one short sentence.", tools)
+        started = asyncio.get_running_loop().time()
         reply = await brain.respond("What time is it? Use the get_time tool.")
+        took = asyncio.get_running_loop().time() - started
     except Exception as exc:
         print(f"FAILED: {type(exc).__name__}: {exc}")
         return 1
-    print(f"Reply: {reply!r}")
+    print(f"Reply: {reply!r} ({took:.1f} s)")
     print(f"Tool call: {'yes' if called else 'NO'}")
     if not called:
         print("The model answered without calling the tool; the assistant needs tool calls.")

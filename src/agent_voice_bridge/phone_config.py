@@ -12,6 +12,7 @@ AVB_SIP_PORT                Default 5060
 AVB_SIP_USERNAME            Account name the iPhone uses (default ``phone``)
 AVB_SIP_PASSWORD            >= 16 chars (required); ``avb-admin init`` generates one
 AVB_SIP_PUBLIC_HOST         Host the phone dials, if different from AVB_SIP_BIND
+AVB_SIP_REALM               Digest realm (default: the public host)
 AVB_SIP_TRANSPORT           ``udp`` (default), ``tcp`` or ``tls``, used in the dial link
 AVB_SIP_TLS_CERT / _KEY     Certificate + key files; enables SIP over TLS (port 5061)
 AVB_SIP_TLS_PORT            Default 5061
@@ -82,6 +83,8 @@ class PhoneSettings:
                 port=int(_get("AVB_SIP_PORT", "5060") or 5060),
                 username=_get("AVB_SIP_USERNAME", "phone") or "phone",
                 password=_get("AVB_SIP_PASSWORD") or "",
+                # Phones match saved passwords by realm; the domain is what they expect.
+                realm=_get("AVB_SIP_REALM", _get("AVB_SIP_PUBLIC_HOST", bind) or bind) or bind,
                 rtp_ports=(int(lo), int(hi or lo)),
                 udp=plain,
                 tcp=plain,

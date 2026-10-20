@@ -25,6 +25,7 @@ def test_server_mode_with_tls(monkeypatch: pytest.MonkeyPatch, tmp_path: object)
     s = PhoneSettings.from_env()
     assert s.transport == "tls" and s.sip.require_srtp and not s.sip.udp and not s.sip.tcp
     assert s.sip.media_ip == "203.0.113.7"
+    assert s.sip.realm == "voice.example.com"
     assert s.dial_url == "linphone-sip:avb@voice.example.com;transport=tls"
 
 

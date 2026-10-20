@@ -74,6 +74,14 @@ class WhisperSTT:
             return await asyncio.to_thread(self._run, resample(pcm16_8k, 8000, 16000))
 
 
+def openai_base(url: str) -> str:
+    """Accept a full endpoint URL copied from docs: the SDK adds the endpoint path itself."""
+    url = url.strip().rstrip("/")
+    for tail in ("/audio/transcriptions", "/chat/completions", "/responses"):
+        url = url.removesuffix(tail)
+    return url
+
+
 # Words a coding assistant hears often; passed as a hint so they're spelled right.
 VOCABULARY = (
     "Claude Code, Codex, approve, reject, npm, pnpm, git, GitHub, API, pull request, "
@@ -107,11 +115,14 @@ class ApiSTT:
             import openai
 
             brain_openai = (env("AVB_BRAIN") or "") == "openai"
-            client = openai.AsyncOpenAI(
-                base_url=base_url
+            url = (
+                base_url
                 or env("AVB_STT_BASE_URL")
                 or (env("AVB_BRAIN_BASE_URL") if brain_openai else None)
-                or None,
+                or None
+            )
+            client = openai.AsyncOpenAI(
+                base_url=openai_base(url) if url else None,
                 api_key=api_key or env("AVB_STT_API_KEY") or env("AVB_BRAIN_API_KEY") or None,
                 timeout=timeout,
                 max_retries=1,

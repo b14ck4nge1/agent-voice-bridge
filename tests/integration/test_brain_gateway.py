@@ -123,6 +123,7 @@ async def test_speech_to_text_via_gateway(gateway: str, monkeypatch: pytest.Monk
     monkeypatch.setenv("AVB_BRAIN", "openai")
     monkeypatch.setenv("AVB_BRAIN_BASE_URL", gateway + "/v1")
     monkeypatch.setenv("AVB_BRAIN_API_KEY", "sk-gateway-key")
+    monkeypatch.setenv("AVB_STT_BASE_URL", gateway + "/v1/audio/transcriptions")  # as in docs
     stt = ApiSTT(language="en")
     assert await stt.transcribe(b"\x00\x01" * 8000) == "approve the request"
     req = SEEN[-1]

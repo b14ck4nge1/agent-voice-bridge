@@ -198,6 +198,9 @@ def make_brain(system: str, tools: list[Tool]) -> Brain:
     if provider == "openai":
         import openai
 
+        from agent_voice_bridge.assistant.stt import openai_base
+
+        base_url = openai_base(base_url) if base_url else None
         client = openai.AsyncOpenAI(
             api_key=api_key, base_url=base_url, timeout=TIMEOUT, max_retries=1
         )

@@ -109,7 +109,7 @@ that marked them done.
 | WIN-02 | install/start/test scripts verified on a personal Windows PC | P1 | – | BLOCKED (AWAITING USER) | Scripts run cleanly | – |
 | REL-01 | License check of dependencies | P2 | – | BACKLOG | Table in docs | – |
 
-| AI-01 | AI assistant: Whisper STT, LLM brain (Claude/OpenAI) with tools, Piper TTS | P0 | VO-07 | IN REVIEW | Real call: natural conversation, approvals confirmed by code | docs/assistant.md |
+| AI-01 | AI assistant: STT (Gemini/API/Whisper), LLM brain (Claude/OpenAI-style) with tools, Piper TTS | P0 | VO-07 | DONE (user report 2026-10-20) | Real call: natural conversation, approvals confirmed by code | docs/assistant.md |
 | AI-02 | PC helper (avb-worker): start/continue/report Claude Code tasks by phone | P0 | AI-01 | IN REVIEW | Task started by voice runs on the PC and is reported back | src/agent_voice_bridge/worker/cli.py |
 | AI-03 | Call when a phone task finishes; calls to the bridge (code-protected) | P1 | AI-02 | IN REVIEW | Real phone | – |
 | AI-04 | Codex tasks from the phone (`codex exec`) | P2 | AI-02 | BACKLOG | – | – |

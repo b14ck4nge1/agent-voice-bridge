@@ -35,9 +35,18 @@ def main(argv: list[str] | None = None) -> None:
         except ValueError as exc:
             raise SystemExit(str(exc)) from exc
         app = create_app(settings, dispatcher=phone.dispatcher, extension=phone.run)
+    elif settings.call_dispatcher == "linphone":
+        from agent_voice_bridge.linphone import LinphoneSettings, LinphoneStack
+
+        try:
+            stack = LinphoneStack(LinphoneSettings.from_env())
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        app = create_app(settings, dispatcher=stack.dispatcher, extension=stack.run)
     else:
         raise SystemExit(
-            f"Unknown AVB_CALL_DISPATCHER={settings.call_dispatcher!r} (use log or bark-sip)"
+            f"Unknown AVB_CALL_DISPATCHER={settings.call_dispatcher!r} "
+            "(use log, bark-sip or linphone)"
         )
     uvicorn.run(
         app, host=settings.host, port=settings.port, log_level=args.log_level, access_log=False

@@ -21,6 +21,7 @@ import sys
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from typing import Protocol
 
 from agent_voice_bridge.sip import sdp
 from agent_voice_bridge.sip.digest import DigestAuthenticator, parse_auth
@@ -91,6 +92,10 @@ class DialError(Exception):
     """A call we placed did not connect."""
 
 
+class _Dialogs(Protocol):
+    def _send_bye(self, call: SipCall) -> None: ...
+
+
 @dataclass
 class SipCall:
     """An answered call. Audio and DTMF are available once ``on_call`` is invoked."""
@@ -108,8 +113,9 @@ class SipCall:
     dtmf: asyncio.Queue[str] = field(default_factory=asyncio.Queue)
     ended: asyncio.Event = field(default_factory=asyncio.Event)
     _cseq: int = 1
-    _server: SipServer | None = None
+    _server: _Dialogs | None = None
     ended_callbacks: list[Callable[[], object]] = field(default_factory=list)
+    route: list[str] = field(default_factory=list)  # Route headers for in-dialog requests
 
     async def hangup(self) -> None:
         if self.ended.is_set():

@@ -84,8 +84,10 @@ def cmd_phone_info(_: argparse.Namespace) -> int:
 
 def cmd_phone_test(args: argparse.Namespace) -> int:
     _load_phone_env()
-    from agent_voice_bridge.phone_test import run_phone_test
+    from agent_voice_bridge.phone_test import run_linphone_test, run_phone_test
 
+    if args.linphone:
+        return asyncio.run(run_linphone_test(seconds=args.seconds))
     return asyncio.run(
         run_phone_test(seconds=args.seconds, send_bark=not args.no_bark, direct=args.direct)
     )
@@ -194,6 +196,11 @@ def main(argv: list[str] | None = None) -> None:
         "--direct",
         action="store_true",
         help="No Bark: wait for Linphone to sign in, then ring it from this server",
+    )
+    p.add_argument(
+        "--linphone",
+        action="store_true",
+        help="Linphone-account path: sign in to sip.linphone.org and call your account",
     )
     p.set_defaults(func=cmd_phone_test)
 

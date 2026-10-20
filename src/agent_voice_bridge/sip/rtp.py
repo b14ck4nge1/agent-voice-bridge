@@ -41,6 +41,7 @@ class RtpSession(asyncio.DatagramProtocol):
         on_audio: Callable[[bytes], None] | None = None,
         allowed_hosts: set[str] | None = None,
         srtp: SrtpContext | None = None,
+        allow_any_host: bool = False,
     ) -> None:
         self.codec = codec
         self.remote = remote
@@ -50,6 +51,9 @@ class RtpSession(asyncio.DatagramProtocol):
         # Only latch to (or accept media from) these IPs: the offered media address and
         # the signalling peer. Stops another host on the network from injecting audio.
         self.allowed_hosts = allowed_hosts or {remote[0]}
+        # For calls through a provider the phone's (NAT) address isn't known in advance;
+        # then only SRTP authentication protects against injected packets.
+        self.allow_any_host = allow_any_host
         self.srtp = srtp
         self.transport: asyncio.DatagramTransport | None = None
         self.ssrc = random.getrandbits(32)
@@ -155,7 +159,9 @@ class RtpSession(asyncio.DatagramProtocol):
     # -- receiving ------------------------------------------------------------------
 
     def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
-        if len(data) < 12 or data[0] >> 6 != 2 or addr[0] not in self.allowed_hosts:
+        if len(data) < 12 or data[0] >> 6 != 2:
+            return
+        if addr[0] not in self.allowed_hosts and not self.allow_any_host:
             return
         if 200 <= data[1] <= 206:  # RTCP / SRTCP packet types (rtcp-mux): ignore
             return

@@ -13,6 +13,12 @@ gave "wrong user/pass" (most likely a stale second Linphone account). Not yet
 tested: locked-phone ringing, cellular, repeated calls, and a real Claude Code or
 Codex request.
 
+**Two phone modes** (choose with `deploy/linphone.sh`): *bark-sip* (above) and
+*linphone*, where the bridge signs in to sip.linphone.org with its own account and calls
+yours, so Linphone's push rings the phone with no Bark. The linphone mode passes tests
+against a simulated provider; it has **not** been tried with sip.linphone.org yet
+([docs/linphone-account.md](docs/linphone-account.md)).
+
 ## Completed (with evidence)
 
 | Area | What | Evidence |

@@ -43,7 +43,7 @@ Claude Code / Codex ──PermissionRequest hook──► avb-hook ──► app
 
 ## Quick start with your own server (phone needs only Bark + Linphone)
 
-See [docs/server-setup.md](docs/server-setup.md): Cloudflare DNS, one install command
+See [docs/server-setup.md](docs/server-setup.md): Cloudflare DNS, one install command For the no-Bark option (Linphone accounts), see [docs/linphone-account.md](docs/linphone-account.md).
 on Ubuntu, one PowerShell command on the PC.
 
 ## Quick start with the phone over Tailscale (Windows)

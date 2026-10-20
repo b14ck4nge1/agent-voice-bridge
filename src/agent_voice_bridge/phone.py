@@ -7,6 +7,7 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Protocol
 
 from agent_voice_bridge.approvals.service import ApprovalService
 from agent_voice_bridge.models import ApprovalState
@@ -21,7 +22,14 @@ from agent_voice_bridge.voice.tts.engines import EspeakTTS, SapiTTS, default_tts
 log = logging.getLogger(__name__)
 
 
-def make_tts(settings: PhoneSettings) -> TextToSpeech:
+class _VoiceSettings(Protocol):
+    @property
+    def tts_voice(self) -> str | None: ...
+    @property
+    def tts_rate(self) -> int: ...
+
+
+def make_tts(settings: _VoiceSettings) -> TextToSpeech:
     tts = default_tts()
     if isinstance(tts, SapiTTS):
         return SapiTTS(voice=settings.tts_voice, rate=settings.tts_rate)

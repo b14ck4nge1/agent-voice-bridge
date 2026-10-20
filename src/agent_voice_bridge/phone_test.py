@@ -7,37 +7,33 @@ check notification, network, audio in both directions and DTMF in one go.
 ``--direct`` skips Bark: it waits for Linphone to register, then rings it from the
 server. On iOS that only rings while Linphone is open or was just in use, because
 without push iOS suspends the app and closes its connection.
+
+``--linphone`` tests the Linphone-account path instead: the bridge signs in to
+sip.linphone.org and calls your Linphone account (push wakes the phone).
 """
 
 from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Awaitable, Callable
 
 from agent_voice_bridge.notify.bark import BarkError, BarkNotifier
 from agent_voice_bridge.phone import make_tts
 from agent_voice_bridge.phone_config import PhoneSettings
 from agent_voice_bridge.sip.server import DialError, SipCall, SipServer
 from agent_voice_bridge.voice.audio import silence
+from agent_voice_bridge.voice.tts.base import TextToSpeech
 
 DIGIT_NAMES = {"*": "star", "#": "hash"}
 
 
-async def run_phone_test(
-    *, seconds: int = 180, send_bark: bool = True, direct: bool = False
-) -> int:
-    try:
-        settings = PhoneSettings.from_env()
-    except ValueError as exc:
-        print(f"Configuration problem: {exc}")
-        return 2
-    tts = make_tts(settings)
-    done = asyncio.Event()
-    report: dict[str, object] = {"call": False, "digits": [], "packets_in": 0}
-
+def _echo_call(
+    tts: TextToSpeech, report: dict[str, object], done: asyncio.Event
+) -> Callable[[SipCall], Awaitable[None]]:
     async def on_call(call: SipCall) -> None:
         report["call"] = True
-        print(f"Call answered from {call.peer.addr[0]} over {call.peer.kind.upper()}")
+        print(f"Call answered ({call.peer.kind.upper()})")
 
         async def say(text: str) -> None:
             pcm, _ = await tts.synthesize(text)
@@ -63,7 +59,72 @@ async def run_phone_test(
         if not call.ended.is_set():
             await asyncio.wait_for(call.rtp.wait_played(), 15)
         report["packets_in"] = call.rtp.packets_in
+        report["encrypted"] = call.rtp.srtp is not None
         done.set()
+
+    return on_call
+
+
+def _summary(report: dict[str, object], started: float) -> None:
+    print(
+        f"Result: call answered: {report['call']}; "
+        f"keys: {''.join(report['digits']) or '-'}; "  # type: ignore[arg-type]
+        f"audio packets from phone: {report['packets_in']}; "
+        f"encrypted audio: {report.get('encrypted', '-')}; "
+        f"time: {time.monotonic() - started:.0f}s"
+    )
+
+
+async def run_linphone_test(*, seconds: int = 180) -> int:
+    from agent_voice_bridge.linphone import LinphoneSettings
+    from agent_voice_bridge.sip.uac import AccountError, SipAccountClient
+
+    try:
+        settings = LinphoneSettings.from_env()
+    except ValueError as exc:
+        print(f"Configuration problem: {exc}")
+        return 2
+    tts = make_tts(settings)
+    done = asyncio.Event()
+    report: dict[str, object] = {"call": False, "digits": [], "packets_in": 0}
+    client = SipAccountClient(settings.account, _echo_call(tts, report, done))
+    print(f"Signing in to {settings.account.domain} as {settings.account.username}...")
+    try:
+        await client.start()
+    except AccountError as exc:
+        print(f"Sign-in failed: {exc}")
+        return 1
+    started = time.monotonic()
+    try:
+        print(f"Signed in. Calling {settings.account.target_uri(settings.target)}...")
+        try:
+            await client.dial(settings.target, ring_seconds=settings.ring_seconds)
+        except DialError as exc:
+            print(f"Call failed: {exc}")
+            return 1
+        try:
+            await asyncio.wait_for(done.wait(), seconds)
+        except TimeoutError:
+            print(f"The call did not finish within {seconds}s.")
+        _summary(report, started)
+        return 0 if report["call"] else 1
+    finally:
+        await client.stop()
+
+
+async def run_phone_test(
+    *, seconds: int = 180, send_bark: bool = True, direct: bool = False
+) -> int:
+    try:
+        settings = PhoneSettings.from_env()
+    except ValueError as exc:
+        print(f"Configuration problem: {exc}")
+        return 2
+    tts = make_tts(settings)
+    done = asyncio.Event()
+    report: dict[str, object] = {"call": False, "digits": [], "packets_in": 0}
+
+    on_call = _echo_call(tts, report, done)
 
     server = SipServer(settings.sip, on_call)
     await server.start()
@@ -98,13 +159,8 @@ async def run_phone_test(
             await asyncio.wait_for(done.wait(), seconds)
         except TimeoutError:
             print(f"No completed call within {seconds}s.")
-        registered = "yes" if server.phone_registered else "no"
-        print(
-            f"Result: phone registered: {registered}; call answered: {report['call']}; "
-            f"keys: {''.join(report['digits']) or '-'}; "  # type: ignore[arg-type]
-            f"audio packets from phone: {report['packets_in']}; "
-            f"time: {time.monotonic() - started:.0f}s"
-        )
+        print(f"Phone registered: {'yes' if server.phone_registered else 'no'}")
+        _summary(report, started)
         return 0 if report["call"] else 1
     finally:
         await server.stop()

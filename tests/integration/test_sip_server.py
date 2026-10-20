@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import socket
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -14,23 +13,10 @@ from agent_voice_bridge.sip.server import (
     SipServerConfig,
     is_private_address,
 )
+from tests.support.ports import free_port as _port
 from tests.support.sip_client import TestPhone, goertzel, make_self_signed, tone
 
 PASSWORD = "correct-horse-battery-staple"
-
-
-def _port() -> int:
-    """A port free for both TCP and UDP (on Windows, some UDP ports are reserved)."""
-    for _ in range(50):
-        with socket.socket() as t, socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as u:
-            t.bind(("127.0.0.1", 0))
-            port = int(t.getsockname()[1])
-            try:
-                u.bind(("127.0.0.1", port))
-            except OSError:
-                continue
-            return port
-    raise RuntimeError("no free port")
 
 
 class Recorder:

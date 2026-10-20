@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import socket
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +24,7 @@ from agent_voice_bridge.sip.server import SipServerConfig
 from agent_voice_bridge.voice.audio import silence
 from tests.conftest import TOTP_SECRET, run_bridge
 from tests.end_to_end.test_hook_e2e import claude_input, decision, finish, run_hook
+from tests.support.ports import free_port as _port
 from tests.support.sip_client import TestPhone, goertzel, tone
 
 SIP_PASSWORD = "phone-password-0123456789"
@@ -40,20 +40,6 @@ class ToneTTS:
     async def synthesize(self, text: str) -> tuple[bytes, int]:
         self.spoken.append(text)
         return tone(700, 0.3) + silence(0.05), 8000
-
-
-def _port() -> int:
-    """A port free for both TCP and UDP (on Windows, some UDP ports are reserved)."""
-    for _ in range(50):
-        with socket.socket() as t, socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as u:
-            t.bind(("127.0.0.1", 0))
-            port = int(t.getsockname()[1])
-            try:
-                u.bind(("127.0.0.1", port))
-            except OSError:
-                continue
-            return port
-    raise RuntimeError("no free port")
 
 
 def _stack(pushes: list[dict[str, Any]]) -> tuple[PhoneStack, ToneTTS]:

@@ -26,8 +26,9 @@ AGENT_NAMES = {
 
 
 def dial_url(host: str, port: int = 5060, transport: str = "udp", user: str = "avb") -> str:
-    hostport = host if port == 5060 else f"{host}:{port}"
-    suffix = ";transport=tcp" if transport == "tcp" else ""
+    default = 5061 if transport == "tls" else 5060
+    hostport = host if port == default else f"{host}:{port}"
+    suffix = f";transport={transport}" if transport in ("tcp", "tls") else ""
     return f"linphone-sip:{user}@{hostport}{suffix}"
 
 

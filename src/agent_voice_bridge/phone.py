@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from agent_voice_bridge.approvals.service import ApprovalService
 from agent_voice_bridge.models import ApprovalState
@@ -25,6 +27,17 @@ def make_tts(settings: PhoneSettings) -> TextToSpeech:
         return SapiTTS(voice=settings.tts_voice, rate=settings.tts_rate)
     assert isinstance(tts, EspeakTTS)
     return tts
+
+
+async def _wait_for_files(*paths: str | None, timeout: float = 600) -> None:
+    """On a fresh server the reverse proxy may still be fetching the certificate."""
+    wanted = [Path(p) for p in paths if p]
+    deadline = asyncio.get_running_loop().time() + timeout
+    while not all(p.is_file() for p in wanted):
+        if asyncio.get_running_loop().time() > deadline:
+            raise RuntimeError(f"TLS certificate files not found: {', '.join(map(str, wanted))}")
+        log.info("waiting for TLS certificate %s", wanted[0])
+        await asyncio.sleep(5)
 
 
 class PhoneStack:
@@ -49,6 +62,7 @@ class PhoneStack:
             return ApprovalState(row["state"]) if row else None
 
         self.dispatcher.attach(state_of)
+        await _wait_for_files(self.settings.sip.tls_cert, self.settings.sip.tls_key)
         self.sip = SipServer(self.settings.sip, PhoneCallHandler(service, self.tts))
         await self.sip.start()
         log.info("Phone path ready: Bark taps dial %s", self.settings.dial_url)

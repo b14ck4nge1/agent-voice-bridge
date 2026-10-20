@@ -21,8 +21,12 @@ class AudioOffer:
     payload_types: list[int]
     rtpmap: dict[int, str] = field(default_factory=dict)
     telephone_event: int | None = None
-    has_crypto: bool = False
+    crypto: list[str] = field(default_factory=list)  # raw "a=crypto:" values (RFC 4568)
     direction: str = "sendrecv"
+
+    @property
+    def has_crypto(self) -> bool:
+        return bool(self.crypto)
 
 
 def parse_offer(body: bytes) -> AudioOffer:
@@ -54,7 +58,7 @@ def parse_offer(body: bytes) -> AudioOffer:
                     if enc.lower().startswith("telephone-event/8000"):
                         audio.telephone_event = int(pt)
             elif line.startswith("a=crypto:"):
-                audio.has_crypto = True
+                audio.crypto.append(line[len("a=crypto:") :].strip())
             elif line.strip() in ("a=sendrecv", "a=sendonly", "a=recvonly", "a=inactive"):
                 audio.direction = line.strip()[2:]
     if audio is None:
@@ -84,6 +88,8 @@ def build_answer(
     telephone_event: int | None,
     direction: str = "sendrecv",
     session_id: int | None = None,
+    profile: str = "RTP/AVP",
+    crypto: str | None = None,
 ) -> bytes:
     sid = session_id or secrets.randbelow(2**31)
     fmts = [str(codec)] + ([str(telephone_event)] if telephone_event is not None else [])
@@ -93,7 +99,7 @@ def build_answer(
         "s=Agent Voice Bridge",
         f"c=IN IP4 {address}",
         "t=0 0",
-        f"m=audio {port} RTP/AVP {' '.join(fmts)}",
+        f"m=audio {port} {profile} {' '.join(fmts)}",
         f"a=rtpmap:{codec} {SUPPORTED[codec]}/8000",
     ]
     if telephone_event is not None:
@@ -101,5 +107,7 @@ def build_answer(
             f"a=rtpmap:{telephone_event} telephone-event/8000",
             f"a=fmtp:{telephone_event} 0-15",
         ]
+    if crypto:
+        lines.append(f"a=crypto:{crypto}")
     lines += ["a=ptime:20", f"a={direction}"]
     return ("\r\n".join(lines) + "\r\n").encode()

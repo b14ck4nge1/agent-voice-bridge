@@ -122,6 +122,46 @@ def cmd_install_hooks(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_test_approval(args: argparse.Namespace) -> int:
+    """Send a harmless approval request through the real path and print the outcome."""
+    from agent_voice_bridge.agents.hook import DEFAULT_URL, BridgeClient, BridgeError, decide
+
+    load_env_file(Path(os.environ.get("AVB_HOOK_ENV", default_data_dir() / "hook.env")))
+    url = os.environ.get("AVB_BRIDGE_URL", DEFAULT_URL)
+    token = os.environ.get("AVB_AGENT_TOKEN", "")
+    if not token:
+        print(
+            "AVB_AGENT_TOKEN is not set (run setup-pc-remote.ps1 or avb-admin init)",
+            file=sys.stderr,
+        )
+        return 2
+    hook_input = {
+        "hook_event_name": "PermissionRequest",
+        "session_id": "avb-test-" + secrets.token_hex(3),
+        "cwd": os.getcwd(),
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": "echo hello from Agent Voice Bridge",
+            "description": "Test request",
+        },
+    }
+    print(
+        f"Sending a test request to {url}; your phone should ring (Bark). Waiting up to {args.seconds}s..."
+    )
+    try:
+        outcome = decide(
+            hook_input,
+            agent="claude-code",
+            client=BridgeClient(url, token),
+            wait_seconds=args.seconds,
+        )
+    except BridgeError as exc:
+        print(f"No decision: {exc}")
+        return 1
+    print(f"Decision: {outcome.behavior}" + (f" ({outcome.message})" if outcome.message else ""))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="avb-admin")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -149,6 +189,12 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--seconds", type=int, default=180, help="How long to wait for the call")
     p.add_argument("--no-bark", action="store_true", help="Don't send a notification; just wait")
     p.set_defaults(func=cmd_phone_test)
+
+    p = sub.add_parser(
+        "test-approval", help="Send a harmless test approval request and wait for it"
+    )
+    p.add_argument("--seconds", type=int, default=180)
+    p.set_defaults(func=cmd_test_approval)
 
     args = parser.parse_args(argv)
     if getattr(args, "wait_seconds", 0) >= install.HOOK_TIMEOUT_SECONDS:

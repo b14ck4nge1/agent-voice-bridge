@@ -54,6 +54,18 @@ decision.
   speech played, keys read back, bridge hung up.
 * Tests: **171 passed, 1 skipped** (Windows SAPI test, which runs on the Windows CI runner).
 
+## Server mode (part 3, ADR-0006)
+
+* SIP over TLS (certificate reloaded periodically) and SDES-SRTP (libsrtp via
+  pylibsrtp); forged/unauthenticated RTP is dropped; plain RTP refused when required.
+* `deploy/`: Dockerfile, docker-compose (Caddy + bridge, host networking), Caddyfile
+  exposing only agent endpoints, `install.sh` for Ubuntu; `scripts/setup-pc-remote.ps1`;
+  `avb-admin test-approval`.
+* Verified here: TLS + SRTP call round trip, DTMF and two-way audio (tests); config
+  safety rules; clean package install on Python 3.12; `install.sh` passes `bash -n`.
+* **Not verified here:** the Docker image build (Debian mirrors are blocked in this
+  sandbox), Caddy certificate issuance, any call from real Linphone.
+
 ## Current work
 
 None in progress. The next engineering task, SIP-01 (TLS registration to

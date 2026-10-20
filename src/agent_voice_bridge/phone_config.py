@@ -12,7 +12,12 @@ AVB_SIP_PORT                Default 5060
 AVB_SIP_USERNAME            Account name the iPhone uses (default ``phone``)
 AVB_SIP_PASSWORD            >= 16 chars (required); ``avb-admin init`` generates one
 AVB_SIP_PUBLIC_HOST         Host the phone dials, if different from AVB_SIP_BIND
-AVB_SIP_TRANSPORT           ``udp`` (default) or ``tcp``, used in the dial link
+AVB_SIP_TRANSPORT           ``udp`` (default), ``tcp`` or ``tls``, used in the dial link
+AVB_SIP_TLS_CERT / _KEY     Certificate + key files; enables SIP over TLS (port 5061)
+AVB_SIP_TLS_PORT            Default 5061
+AVB_SIP_REQUIRE_SRTP        ``1`` refuses unencrypted audio (default: 1 when TLS is on)
+AVB_SIP_PLAIN               ``0`` disables UDP/TCP listeners (default: 0 when TLS is on)
+AVB_SIP_MEDIA_IP            Public IP to put in SDP if the server sits behind 1:1 NAT
 AVB_RTP_PORTS               Default ``40000-40200``
 AVB_TTS_VOICE / AVB_TTS_RATE  Windows SAPI voice name and speed (-10..10)
 ==========================  =========================================================
@@ -44,7 +49,8 @@ class PhoneSettings:
 
     @property
     def dial_url(self) -> str:
-        return dial_url(self.public_host, self.sip.port, self.transport)
+        port = self.sip.tls_port if self.transport == "tls" else self.sip.port
+        return dial_url(self.public_host, port, self.transport)
 
     @classmethod
     def from_env(cls) -> PhoneSettings:
@@ -55,9 +61,15 @@ class PhoneSettings:
             raise ValueError(f"AVB_CALL_DISPATCHER=bark-sip needs: {', '.join(missing)}")
         lo, _, hi = (_get("AVB_RTP_PORTS", "40000-40200") or "").partition("-")
         bind = _get("AVB_SIP_BIND") or ""
-        transport = (_get("AVB_SIP_TRANSPORT", "udp") or "udp").lower()
-        if transport not in ("udp", "tcp"):
-            raise ValueError("AVB_SIP_TRANSPORT must be udp or tcp")
+        cert, key = _get("AVB_SIP_TLS_CERT"), _get("AVB_SIP_TLS_KEY")
+        tls = bool(cert and key)
+        transport = (_get("AVB_SIP_TRANSPORT", "tls" if tls else "udp") or "udp").lower()
+        if transport not in ("udp", "tcp", "tls"):
+            raise ValueError("AVB_SIP_TRANSPORT must be udp, tcp or tls")
+        if transport == "tls" and not tls:
+            raise ValueError("AVB_SIP_TRANSPORT=tls needs AVB_SIP_TLS_CERT and AVB_SIP_TLS_KEY")
+        plain = (_get("AVB_SIP_PLAIN", "0" if tls else "1") or "1") == "1"
+        require_srtp = (_get("AVB_SIP_REQUIRE_SRTP", "1" if tls else "0") or "0") == "1"
         settings = cls(
             bark=BarkConfig(
                 device_key=_get("AVB_BARK_DEVICE_KEY") or "",
@@ -71,6 +83,13 @@ class PhoneSettings:
                 username=_get("AVB_SIP_USERNAME", "phone") or "phone",
                 password=_get("AVB_SIP_PASSWORD") or "",
                 rtp_ports=(int(lo), int(hi or lo)),
+                udp=plain,
+                tcp=plain,
+                tls_cert=cert,
+                tls_key=key,
+                tls_port=int(_get("AVB_SIP_TLS_PORT", "5061") or 5061),
+                require_srtp=require_srtp,
+                media_ip=_get("AVB_SIP_MEDIA_IP"),
             ),
             public_host=_get("AVB_SIP_PUBLIC_HOST", bind) or bind,
             transport=transport,
@@ -83,12 +102,16 @@ class PhoneSettings:
     def validate(self) -> None:
         self.bark.validate()
         self.sip.validate()
+        secured = (
+            bool(self.sip.tls_cert) and self.sip.require_srtp and not (self.sip.udp or self.sip.tcp)
+        )
         if (
             not is_private_address(self.sip.bind_host)
+            and not secured
             and os.environ.get("AVB_ALLOW_PUBLIC_SIP") != "1"
         ):
             raise ValueError(
-                f"AVB_SIP_BIND={self.sip.bind_host} is not a private address. The SIP server has no "
-                "encryption of its own; bind it to your Tailscale (100.x) or LAN address, or set "
-                "AVB_ALLOW_PUBLIC_SIP=1 if you really mean it."
+                f"AVB_SIP_BIND={self.sip.bind_host} is not a private address. On a public address "
+                "use TLS only (AVB_SIP_TLS_CERT/_KEY, AVB_SIP_PLAIN=0, AVB_SIP_REQUIRE_SRTP=1), or "
+                "bind to your Tailscale (100.x) or LAN address."
             )

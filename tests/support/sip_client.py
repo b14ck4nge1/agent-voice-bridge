@@ -6,13 +6,17 @@ reusing the server's serializer, so the two don't share bugs.
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import math
+import os
 import random
 import re
 import secrets
+import ssl
 import struct
 from dataclasses import dataclass, field
+from typing import Any
 
 from agent_voice_bridge.sip import g711
 
@@ -60,12 +64,20 @@ def _parse(raw: bytes) -> Response:
 class _Rtp(asyncio.DatagramProtocol):
     def __init__(self) -> None:
         self.received = bytearray()
+        self.inbound: Any = None  # pylibsrtp Session once SRTP is negotiated
+        self.rejected = 0
         self.transport: asyncio.DatagramTransport | None = None
 
     def connection_made(self, transport: asyncio.BaseTransport) -> None:
         self.transport = transport  # type: ignore[assignment]
 
     def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
+        if self.inbound is not None:
+            try:
+                data = bytes(self.inbound.unprotect(data))
+            except Exception:
+                self.rejected += 1
+                return
         pt = data[1] & 0x7F
         if pt in (0, 8):
             self.received.extend(g711.decode(data[12:], pt))
@@ -79,7 +91,10 @@ class TestPhone:
     port: int
     username: str
     password: str
-    transport: str = "udp"
+    transport: str = "udp"  # udp | tcp | tls
+    tls_ca: str | None = None  # CA/cert file to trust for "tls"
+    srtp_key: bytes | None = None  # our SDES key once offered
+    outbound: Any = None
     local_ip: str = "127.0.0.1"
     call_id: str = field(default_factory=lambda: secrets.token_hex(8))
     cseq: int = 0
@@ -108,7 +123,12 @@ class TestPhone:
             self._udp, _ = await loop.create_datagram_endpoint(P, local_addr=(self.local_ip, 0))
             self.local_port = self._udp.get_extra_info("sockname")[1]
         else:
-            self._reader, self._writer = await asyncio.open_connection(self.host, self.port)
+            ctx = None
+            if self.transport == "tls":
+                ctx = ssl.create_default_context(cafile=self.tls_ca)
+            self._reader, self._writer = await asyncio.open_connection(
+                self.host, self.port, ssl=ctx, server_hostname="localhost" if ctx else None
+            )
             self.local_port = self._writer.get_extra_info("sockname")[1]
             loop.create_task(self._tcp_reader())
         self.rtp_transport, self.rtp = await loop.create_datagram_endpoint(
@@ -239,7 +259,7 @@ class TestPhone:
         )
         return (await self.response()).status
 
-    def offer(self, *, profile: str = "RTP/AVP", crypto: bool = False) -> bytes:
+    def offer(self, *, profile: str = "RTP/AVP", crypto: bool | str = False) -> bytes:
         lines = [
             "v=0",
             f"o=test 1 1 IN IP4 {self.local_ip}",
@@ -252,9 +272,9 @@ class TestPhone:
             "a=fmtp:101 0-16",
         ]
         if crypto:
-            lines.append(
-                "a=crypto:1 AES_CM_128_HMAC_SHA1_80 inline:WVNfX19zZW1jdGwgKCkgewkyMjA7fQp9CnVubGVz"
-            )
+            self.srtp_key = os.urandom(30)
+            suite = "AES_CM_128_HMAC_SHA1_80" if crypto is True else str(crypto)
+            lines.append(f"a=crypto:1 {suite} inline:{base64.b64encode(self.srtp_key).decode()}")
         lines += ["a=rtcp-mux", "a=sendrecv"]
         return ("\r\n".join(lines) + "\r\n").encode()
 
@@ -285,17 +305,34 @@ class TestPhone:
             ip = re.search(r"c=IN IP4 (\S+)", text).group(1)  # type: ignore[union-attr]
             port = int(re.search(r"m=audio (\d+)", text).group(1))  # type: ignore[union-attr]
             self.remote_media = (ip, port)
+            m = re.search(r"a=crypto:\S+ \S+ inline:([A-Za-z0-9+/=]+)", text)
+            if m and self.srtp_key is not None:
+                from pylibsrtp import Policy, Session
+
+                prof = Policy.SRTP_PROFILE_AES128_CM_SHA1_80
+                self.outbound = Session(
+                    Policy(key=self.srtp_key, ssrc_type=Policy.SSRC_ANY_OUTBOUND, srtp_profile=prof)
+                )
+                assert self.rtp is not None
+                self.rtp.inbound = Session(
+                    Policy(
+                        key=base64.b64decode(m.group(1)),
+                        ssrc_type=Policy.SSRC_ANY_INBOUND,
+                        srtp_profile=prof,
+                    )
+                )
         return r
+
+    def _protect(self, packet: bytes) -> bytes:
+        return bytes(self.outbound.protect(packet)) if self.outbound is not None else packet
 
     async def send_audio(self, pcm: bytes, pt: int = 0) -> None:
         assert self.remote_media is not None
         seq, ts, ssrc = random.getrandbits(16), random.getrandbits(32), random.getrandbits(32)
         for i in range(0, len(pcm), 320):
             payload = g711.encode(pcm[i : i + 320], pt)
-            self.rtp_transport.sendto(
-                struct.pack("!BBHII", 0x80, pt, seq & 0xFFFF, ts & 0xFFFFFFFF, ssrc) + payload,
-                self.remote_media,
-            )
+            pkt = struct.pack("!BBHII", 0x80, pt, seq & 0xFFFF, ts & 0xFFFFFFFF, ssrc) + payload
+            self.rtp_transport.sendto(self._protect(pkt), self.remote_media)
             seq, ts = seq + 1, ts + 160
             await asyncio.sleep(0.02)
 
@@ -307,7 +344,7 @@ class TestPhone:
         for n, end in enumerate([False, False, True, True, True]):
             payload = struct.pack("!BBH", event, (0x80 if end else 0) | 10, 160 * (n + 1))
             pkt = struct.pack("!BBHII", 0x80, (0x80 if n == 0 else 0) | 101, n, ts, ssrc) + payload
-            self.rtp_transport.sendto(pkt, self.remote_media)
+            self.rtp_transport.sendto(self._protect(pkt), self.remote_media)
             await asyncio.sleep(0.02)
         await asyncio.sleep(0.1)
 
@@ -321,3 +358,41 @@ class TestPhone:
         if self._writer:
             self._writer.close()
         self.rtp_transport.close()
+
+
+def make_self_signed(directory: Any) -> tuple[str, str]:
+    """A throwaway certificate for "localhost" (tests only)."""
+    import datetime
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")])
+    now = datetime.datetime.now(datetime.UTC)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - datetime.timedelta(days=1))
+        .not_valid_after(now + datetime.timedelta(days=1))
+        .add_extension(x509.SubjectAlternativeName([x509.DNSName("localhost")]), critical=False)
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .sign(key, hashes.SHA256())
+    )
+    cert_path, key_path = f"{directory}/cert.pem", f"{directory}/key.pem"
+    with open(cert_path, "wb") as fh:
+        fh.write(cert.public_bytes(serialization.Encoding.PEM))
+    with open(key_path, "wb") as fh:
+        fh.write(
+            key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            )
+        )
+    return cert_path, key_path

@@ -1,0 +1,32 @@
+# Host networking: SIP/SDP carry IP addresses and RTP uses a UDP port range.
+services:
+  caddy:
+    image: caddy:2
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      AVB_DOMAIN: ${AVB_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+  bridge:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    network_mode: host
+    restart: unless-stopped
+    depends_on: [caddy]
+    env_file: .env
+    environment:
+      AVB_SIP_TLS_CERT: /caddy/caddy/certificates/acme-v02.api.letsencrypt.org-directory/${AVB_DOMAIN}/${AVB_DOMAIN}.crt
+      AVB_SIP_TLS_KEY: /caddy/caddy/certificates/acme-v02.api.letsencrypt.org-directory/${AVB_DOMAIN}/${AVB_DOMAIN}.key
+    volumes:
+      - caddy_data:/caddy:ro
+      - bridge_data:/data
+
+volumes:
+  caddy_data:
+  caddy_config:
+  bridge_data:

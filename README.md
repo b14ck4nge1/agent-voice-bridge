@@ -41,7 +41,12 @@ Claude Code / Codex ──PermissionRequest hook──► avb-hook ──► app
 * Built-in SIP server, Bark wake-up and a keypad call flow with spoken prompts.
 * 171 automated tests: unit, integration, and end-to-end with real hook processes and SIP calls.
 
-## Quick start with the phone (Windows)
+## Quick start with your own server (phone needs only Bark + Linphone)
+
+See [docs/server-setup.md](docs/server-setup.md): Cloudflare DNS, one install command
+on Ubuntu, one PowerShell command on the PC.
+
+## Quick start with the phone over Tailscale (Windows)
 
 See [docs/phone-setup.md](docs/phone-setup.md): one script (`scripts/setup-phone.ps1`)
 installs everything and writes the exact values to enter on the iPhone.

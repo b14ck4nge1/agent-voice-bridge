@@ -1,9 +1,8 @@
 """A small SIP registrar and call-answering endpoint (UAS) for one phone.
 
 Scope, on purpose: one SIP account (the iPhone's), digest-authenticated REGISTER
-and INVITE, G.711 audio, RFC 4733 DTMF, UDP and TCP. No proxying or forwarding, and
-no TLS/SRTP: it is meant to listen only on a private network address (Tailscale /
-WireGuard, which encrypts everything) or a trusted LAN. Calls come *from* the phone,
+and INVITE, G.711 audio, RFC 4733 DTMF, over UDP/TCP (private networks such as
+Tailscale) or TLS with SDES-SRTP (a public server). No proxying or forwarding. Calls come *from* the phone,
 started by the Bark notification, so the server never has to reach a sleeping phone.
 """
 
@@ -15,6 +14,7 @@ import ipaddress
 import logging
 import secrets
 import socket
+import ssl
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -33,6 +33,8 @@ from agent_voice_bridge.sip.message import (
     user_of,
 )
 from agent_voice_bridge.sip.rtp import RtpSession
+from agent_voice_bridge.sip.srtp import SrtpContext, SrtpError
+from agent_voice_bridge.sip.srtp import negotiate as srtp_negotiate
 
 log = logging.getLogger(__name__)
 
@@ -56,6 +58,12 @@ class SipServerConfig:
     udp: bool = True
     tcp: bool = True
     max_auth_failures: int = 10
+    # SIP over TLS (needed when the server faces the internet). Certificate files
+    # are re-read periodically, so renewals (e.g. by Caddy/Let's Encrypt) apply.
+    tls_cert: str | None = None
+    tls_key: str | None = None
+    tls_port: int = 5061
+    require_srtp: bool = False
 
     def validate(self) -> None:
         if len(self.password) < 16:
@@ -88,6 +96,7 @@ class SipCall:
     local_to: str  # our To header with tag (becomes From in our requests)
     remote_contact: str
     rtp_port: int = 0
+    answer_sdp: bytes = b""
     dtmf: asyncio.Queue[str] = field(default_factory=asyncio.Queue)
     ended: asyncio.Event = field(default_factory=asyncio.Event)
     _cseq: int = 1
@@ -117,6 +126,8 @@ class SipServer:
         self._failures: dict[str, list[float]] = {}
         self._udp: asyncio.DatagramTransport | None = None
         self._tcp: asyncio.Server | None = None
+        self._tls: asyncio.Server | None = None
+        self._tls_ctx: ssl.SSLContext | None = None
         self._tasks: set[asyncio.Task[None]] = set()
 
     # -- lifecycle --------------------------------------------------------------
@@ -134,9 +145,37 @@ class SipServer:
             self._udp, _ = await loop.create_datagram_endpoint(_Udp, local_addr=(host, port))
         if self.config.tcp:
             self._tcp = await asyncio.start_server(self._on_tcp, host, port)
+        if self.config.tls_cert and self.config.tls_key:
+            ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+            ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+            ctx.load_cert_chain(self.config.tls_cert, self.config.tls_key)
+            self._tls_ctx = ctx
+
+            async def on_tls(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+                await self._on_tcp(reader, writer, kind="tls")
+
+            self._tls = await asyncio.start_server(on_tls, host, self.config.tls_port, ssl=ctx)
+            reload = loop.create_task(self._reload_cert())
+            self._tasks.add(reload)
         log.info(
-            "SIP listening on %s:%s (udp=%s tcp=%s)", host, port, self.config.udp, self.config.tcp
+            "SIP listening on %s (udp=%s tcp=%s on %s, tls=%s on %s, srtp required=%s)",
+            host,
+            self.config.udp,
+            self.config.tcp,
+            port,
+            self._tls is not None,
+            self.config.tls_port,
+            self.config.require_srtp,
         )
+
+    async def _reload_cert(self) -> None:
+        while True:
+            await asyncio.sleep(6 * 3600)
+            try:
+                assert self._tls_ctx is not None and self.config.tls_cert and self.config.tls_key
+                self._tls_ctx.load_cert_chain(self.config.tls_cert, self.config.tls_key)
+            except (OSError, ssl.SSLError) as exc:
+                log.warning("could not reload TLS certificate: %s", exc)
 
     async def stop(self) -> None:
         for call in list(self.calls.values()):
@@ -145,9 +184,10 @@ class SipServer:
             task.cancel()
         if self._udp:
             self._udp.close()
-        if self._tcp:
-            self._tcp.close()
-            await self._tcp.wait_closed()
+        for srv in (self._tcp, self._tls):
+            if srv:
+                srv.close()
+                await srv.wait_closed()
 
     @property
     def phone_registered(self) -> bool:
@@ -175,10 +215,12 @@ class SipServer:
         peer = _Peer("udp", addr, self._local_ip_for(addr[0]), lambda b: udp.sendto(b, addr))
         self._dispatch(data, peer)
 
-    async def _on_tcp(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    async def _on_tcp(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, kind: str = "tcp"
+    ) -> None:
         addr = writer.get_extra_info("peername")[:2]
         local = writer.get_extra_info("sockname")[0]
-        peer = _Peer("tcp", addr, self.config.media_ip or local, writer.write)
+        peer = _Peer(kind, addr, self.config.media_ip or local, writer.write)
         buffer = b""
         try:
             while True:
@@ -333,12 +375,7 @@ class SipServer:
             if call is None:
                 self._reply(peer, msg, 481, "Call/Transaction Does Not Exist")
                 return
-            answer = sdp.build_answer(
-                address=peer.local_ip,
-                port=call.rtp_port,
-                codec=call.rtp.codec,
-                telephone_event=call.rtp.telephone_event,
-            )
+            answer = call.answer_sdp  # same session, same keys
             self._reply(
                 peer,
                 msg,
@@ -362,31 +399,41 @@ class SipServer:
             )
             return
         codec = sdp.choose_codec(offer)
-        if codec is None or "SAVP" in offer.profile:
-            # SAVP means the phone insists on SRTP, which this server doesn't do.
+        srtp: tuple[SrtpContext, str] | None = None
+        if offer.crypto:
+            try:
+                srtp = srtp_negotiate(offer.crypto)
+            except SrtpError:
+                srtp = None
+        problem = None
+        if codec is None:
+            problem = "need PCMU or PCMA"
+        elif srtp is None and ("SAVP" in offer.profile or self.config.require_srtp):
+            problem = (
+                "need SDES-SRTP with AES_CM_128_HMAC_SHA1_80/32 (Linphone: media encryption SRTP)"
+            )
+        if problem:
             self._reply(
-                peer,
-                msg,
-                488,
-                "Not Acceptable Here",
-                extra=[
-                    (
-                        "Warning",
-                        '399 avb "need PCMU/PCMA over RTP/AVP; set media encryption to None"',
-                    )
-                ],
+                peer, msg, 488, "Not Acceptable Here", extra=[("Warning", f'399 avb "{problem}"')]
             )
             return
-        task = asyncio.get_running_loop().create_task(self._answer(msg, peer, offer, codec))
+        assert codec is not None
+        task = asyncio.get_running_loop().create_task(self._answer(msg, peer, offer, codec, srtp))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
     def _contact(self, peer: _Peer) -> str:
-        transport = ";transport=tcp" if peer.kind == "tcp" else ""
-        return f"<sip:avb@{peer.local_ip}:{self.config.port}{transport}>"
+        port = self.config.tls_port if peer.kind == "tls" else self.config.port
+        transport = f";transport={peer.kind}" if peer.kind != "udp" else ""
+        return f"<sip:avb@{peer.local_ip}:{port}{transport}>"
 
     async def _answer(
-        self, msg: SipMessage, peer: _Peer, offer: sdp.AudioOffer, codec: int
+        self,
+        msg: SipMessage,
+        peer: _Peer,
+        offer: sdp.AudioOffer,
+        codec: int,
+        srtp: tuple[SrtpContext, str] | None = None,
     ) -> None:
         local_tag = secrets.token_hex(6)
         self._reply(peer, msg, 100, "Trying")
@@ -405,6 +452,7 @@ class SipServer:
             telephone_event=offer.telephone_event,
             on_dtmf=on_dtmf,
             allowed_hosts={offer.address, peer.addr[0]},
+            srtp=srtp[0] if srtp else None,
         )
         caller = user_of(uri_of(msg.get("From") or "")) or "unknown"
         call = SipCall(
@@ -421,8 +469,14 @@ class SipServer:
         )
         self.calls[msg.call_id] = call
         answer = sdp.build_answer(
-            address=peer.local_ip, port=rtp_port, codec=codec, telephone_event=offer.telephone_event
+            address=peer.local_ip,
+            port=rtp_port,
+            codec=codec,
+            telephone_event=offer.telephone_event,
+            profile=offer.profile if srtp else "RTP/AVP",
+            crypto=srtp[1] if srtp else None,
         )
+        call.answer_sdp = answer
         raw = self._reply(
             peer,
             msg,
@@ -496,11 +550,12 @@ class SipServer:
             self.calls.pop(call.call_id, None)
         call._cseq += 1
         peer = call.peer
-        transport = "TCP" if peer.kind == "tcp" else "UDP"
+        transport = peer.kind.upper()
         bye = SipMessage(method="BYE", uri=call.remote_contact)
+        port = self.config.tls_port if peer.kind == "tls" else self.config.port
         bye.add(
             "Via",
-            f"SIP/2.0/{transport} {peer.local_ip}:{self.config.port};branch=z9hG4bK{secrets.token_hex(8)};rport",
+            f"SIP/2.0/{transport} {peer.local_ip}:{port};branch=z9hG4bK{secrets.token_hex(8)};rport",
         )
         bye.add("Max-Forwards", "70")
         bye.add("From", call.local_to)
@@ -532,5 +587,7 @@ def is_private_address(host: str) -> bool:
     try:
         ip = ipaddress.ip_address(host)
     except ValueError:
+        return False
+    if ip.is_unspecified:  # 0.0.0.0 / :: listen on every interface, public ones included
         return False
     return ip.is_private or ip.is_loopback or ip in ipaddress.ip_network("100.64.0.0/10")

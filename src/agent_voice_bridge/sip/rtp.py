@@ -4,8 +4,8 @@
 * Symmetric RTP ("latching"): once a packet arrives, replies go to the address it
   came from. That copes with NAT, and with peers that advertise an address other
   than the one their packets come from.
-* Plain RTP only. Use it over a private network (e.g. Tailscale/WireGuard), which
-  encrypts the traffic, or on a LAN.
+* Plain RTP on private networks (Tailscale/WireGuard encrypts it), or SRTP
+  (``srtp=``) when the server faces the internet.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ from collections.abc import Callable
 from typing import Any
 
 from agent_voice_bridge.sip import g711
+from agent_voice_bridge.sip.srtp import SrtpContext
 
 log = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ class RtpSession(asyncio.DatagramProtocol):
         on_dtmf: Callable[[str], None] | None = None,
         on_audio: Callable[[bytes], None] | None = None,
         allowed_hosts: set[str] | None = None,
+        srtp: SrtpContext | None = None,
     ) -> None:
         self.codec = codec
         self.remote = remote
@@ -48,6 +50,7 @@ class RtpSession(asyncio.DatagramProtocol):
         # Only latch to (or accept media from) these IPs: the offered media address and
         # the signalling peer. Stops another host on the network from injecting audio.
         self.allowed_hosts = allowed_hosts or {remote[0]}
+        self.srtp = srtp
         self.transport: asyncio.DatagramTransport | None = None
         self.ssrc = random.getrandbits(32)
         self.seq = random.getrandbits(16)
@@ -136,9 +139,10 @@ class RtpSession(asyncio.DatagramProtocol):
             else:
                 chunk = silence
             if self.transport is not None:
-                self.transport.sendto(
-                    self._packet(g711.encode(chunk, self.codec), self.codec), self.remote
-                )
+                packet = self._packet(g711.encode(chunk, self.codec), self.codec)
+                if self.srtp is not None:
+                    packet = self.srtp.protect(packet)
+                self.transport.sendto(packet, self.remote)
                 self.packets_out += 1
             self.timestamp += FRAME_SAMPLES
             frame += 1
@@ -153,6 +157,13 @@ class RtpSession(asyncio.DatagramProtocol):
     def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
         if len(data) < 12 or data[0] >> 6 != 2 or addr[0] not in self.allowed_hosts:
             return
+        if 200 <= data[1] <= 206:  # RTCP / SRTCP packet types (rtcp-mux): ignore
+            return
+        if self.srtp is not None:
+            decrypted = self.srtp.unprotect(data)
+            if decrypted is None:
+                return  # failed authentication: never latch to or play forged packets
+            data = decrypted
         if not self._latched or addr != self.remote:
             if not self._latched:
                 log.debug("RTP latched to %s (offered %s)", addr, self.remote)

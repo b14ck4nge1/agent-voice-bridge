@@ -43,6 +43,15 @@ that marked them done.
 | HW-03 | Real iPhone test of the full path | P0 | PB-04 | BLOCKED (AWAITING USER) | Bark rings locked phone; tap → call → hear prompts → keys work | docs/phone-setup.md |
 | VO-07 | Speech recognition instead of keypad | P1 | HW-03 | READY | Spoken approve/reject works on the phone | – |
 
+### Phase 1c: public server (ADR-0006)
+
+| ID | Task | Pri | Deps | Status | Acceptance criteria | Evidence |
+|---|---|---|---|---|---|---|
+| PS-01 | SIP over TLS + SDES-SRTP | P0 | PB-02 | DONE | TLS+SRTP call test, forged RTP dropped | `sip/srtp.py`, `tests/integration/test_sip_server.py` |
+| PS-02 | Docker/Caddy deployment + Ubuntu install script | P0 | PS-01 | TESTING | Runs on user's Ubuntu 26.04 server | `deploy/` |
+| PS-03 | PC connection script + test-approval command | P0 | PS-02 | TESTING | `Decision: allow` on user's PC | `scripts/setup-pc-remote.ps1`, `admin.py` |
+| HW-04 | Real iPhone via server: Bark → Linphone TLS/SRTP call → approve | P0 | PS-03 | BLOCKED (AWAITING USER) | Works on cellular | docs/server-setup.md |
+
 ## Phase 2: approval bridge
 
 | ID | Task | Pri | Deps | Status | Acceptance criteria | Evidence |

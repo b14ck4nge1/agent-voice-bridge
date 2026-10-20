@@ -70,7 +70,12 @@ get() { grep -E "^$1=" "$ENV" 2>/dev/null | head -1 | cut -d= -f2- || true; }
 AGENT_TOKEN="$(get AVB_AGENT_TOKEN)"; [[ -n "$AGENT_TOKEN" ]] || AGENT_TOKEN="$(rand 43)"
 VOICE_TOKEN="$(get AVB_VOICE_TOKEN)"; [[ -n "$VOICE_TOKEN" ]] || VOICE_TOKEN="$(rand 43)"
 SIP_PASSWORD="$(get AVB_SIP_PASSWORD)"; [[ -n "$SIP_PASSWORD" ]] || SIP_PASSWORD="$(rand 24)"
-BARK_CRYPTO="$(get AVB_BARK_ENCRYPTION_KEY)"; [[ -n "$BARK_CRYPTO" ]] || BARK_CRYPTO="$(rand 32)"
+# Bark encryption is off by default (works with an unencrypted Bark setup you may
+# already use for other services). Set AVB_BARK_ENCRYPT=1 to turn it on.
+BARK_CRYPTO=""
+if [[ "${AVB_BARK_ENCRYPT:-0}" == 1 ]]; then
+  BARK_CRYPTO="$(get AVB_BARK_ENCRYPTION_KEY)"; [[ -n "$BARK_CRYPTO" ]] || BARK_CRYPTO="$(rand 32)"
+fi
 TOTP="$(get AVB_TOTP_SECRET)"
 [[ -n "$TOTP" ]] || TOTP="$(python3 -c "import base64,secrets;print(base64.b32encode(secrets.token_bytes(20)).decode().rstrip('='))")"
 BARK_IV="$(rand 12)"
@@ -83,7 +88,7 @@ AVB_AGENT_TOKEN=$AGENT_TOKEN
 AVB_VOICE_TOKEN=$VOICE_TOKEN
 AVB_TOTP_SECRET=$TOTP
 AVB_BARK_DEVICE_KEY=$BARK_KEY
-AVB_BARK_ENCRYPTION_KEY=$BARK_CRYPTO
+${BARK_CRYPTO:+AVB_BARK_ENCRYPTION_KEY=$BARK_CRYPTO}
 AVB_SIP_BIND=0.0.0.0
 AVB_SIP_PUBLIC_HOST=$DOMAIN
 AVB_SIP_MEDIA_IP=${PUBLIC_IP}
@@ -102,15 +107,17 @@ done
 if [[ "${OK:-0}" == 1 ]]; then echo "   https://$DOMAIN is up"; else
   echo "   HTTPS not up yet. Check DNS, then: docker compose -f $DIR/deploy/docker-compose.yml logs caddy"; fi
 
+if [[ -n "$BARK_CRYPTO" ]]; then
+  BARK_TEXT="Settings > Encryption: AES256, GCM, noPadding, Key $BARK_CRYPTO, IV $BARK_IV"
+else
+  BARK_TEXT="No encryption setting needed. (Notifications show only agent, project and risk level.)"
+fi
 DETAILS="$DIR/deploy/SETUP-DETAILS.txt"
 cat > "$DETAILS" <<EOF
 AGENT VOICE BRIDGE - SETUP DETAILS  (secrets: keep private, delete after setup)
 
 === iPhone: Bark ===
-Allow notifications and Critical Alerts.
-Settings > Encryption:  Algorithm AES256,  Mode GCM,  Padding noPadding
-  Key: $BARK_CRYPTO
-  IV:  $BARK_IV   (any 12 characters; each notification carries its own)
+Allow notifications and Critical Alerts. $BARK_TEXT
 
 === iPhone: Linphone ===
 "Use SIP account" (third-party SIP account, NOT a linphone.org account):

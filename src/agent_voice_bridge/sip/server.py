@@ -152,9 +152,17 @@ class SipServer:
             self._tls_ctx = ctx
 
             async def on_tls(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+                # Handshake explicitly so failures (wrong name, old TLS, scanners) are logged.
+                peer = writer.get_extra_info("peername")
+                try:
+                    await asyncio.wait_for(writer.start_tls(ctx), 15)
+                except (ssl.SSLError, OSError, TimeoutError) as exc:
+                    log.warning("TLS handshake with %s failed: %s", peer, exc)
+                    writer.close()
+                    return
                 await self._on_tcp(reader, writer, kind="tls")
 
-            self._tls = await asyncio.start_server(on_tls, host, self.config.tls_port, ssl=ctx)
+            self._tls = await asyncio.start_server(on_tls, host, self.config.tls_port)
             reload = loop.create_task(self._reload_cert())
             self._tasks.add(reload)
         log.info(
@@ -221,6 +229,7 @@ class SipServer:
         addr = writer.get_extra_info("peername")[:2]
         local = writer.get_extra_info("sockname")[0]
         peer = _Peer(kind, addr, self.config.media_ip or local, writer.write)
+        log.info("SIP %s connection from %s:%s", kind.upper(), *addr)
         buffer = b""
         try:
             while True:
@@ -301,6 +310,8 @@ class SipServer:
             resp.body = body
         raw = resp.to_bytes()
         peer.send(raw)
+        if status >= 200 and req.method in ("REGISTER", "INVITE", "BYE"):
+            log.info("SIP %s from %s -> %s %s", req.method, peer.addr[0], status, reason)
         if status >= 200:
             seq, method = req.cseq
             self._recent[(req.call_id, seq, method)] = raw

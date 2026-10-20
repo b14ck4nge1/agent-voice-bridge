@@ -110,6 +110,9 @@ class TestPhone:
     remote_media: tuple[str, int] | None = None
     nc: int = 0
     requests_in: list[str] = field(default_factory=list)
+    answer_status: int = 200  # how we answer an INVITE from the server
+    callee: bool = False  # True once we answered the server's call
+    remote_from: str = ""
 
     async def connect(self) -> None:
         loop = asyncio.get_running_loop()
@@ -156,21 +159,99 @@ class TestPhone:
     def _incoming(self, data: bytes) -> None:
         if data.startswith(b"SIP/2.0"):
             self._queue.put_nowait(data)
-        else:  # a request from the server (BYE)
+        else:  # a request from the server (BYE, or INVITE when it calls us)
             first = data.split(b"\r\n", 1)[0].decode()
-            self.requests_in.append(first.split()[0])
-            self._respond_ok(data)
+            method = first.split()[0]
+            self.requests_in.append(method)
+            if method == "INVITE":
+                self._answer_invite(data)
+            elif method not in ("ACK", "CANCEL"):
+                self._respond_ok(data)
 
-    def _respond_ok(self, req: bytes) -> None:
-        head = req.split(b"\r\n\r\n", 1)[0].decode().split("\r\n")
-        keep = [
-            line
-            for line in head[1:]
-            if line.split(":", 1)[0].lower() in ("via", "from", "to", "call-id", "cseq")
-        ]
-        self._send(
-            ("SIP/2.0 200 OK\r\n" + "\r\n".join(keep) + "\r\nContent-Length: 0\r\n\r\n").encode()
+    def _answer_invite(self, req: bytes) -> None:
+        """Act as the callee: answer with ``answer_status`` (200 + SDP by default)."""
+        head, _, body = req.partition(b"\r\n\r\n")
+        lines = head.decode().split("\r\n")
+        self.call_id = next(
+            v.split(":", 1)[1].strip() for v in lines if v.lower().startswith("call-id:")
         )
+        self.remote_from = next(
+            v.split(":", 1)[1].strip() for v in lines if v.lower().startswith("from:")
+        )
+        if self.answer_status != 200:
+            self._respond_ok(req, status=f"{self.answer_status} Busy Here", to_tag=self.tag)
+            return
+        text = body.decode()
+        ip = re.search(r"c=IN IP4 (\S+)", text).group(1)  # type: ignore[union-attr]
+        port = int(re.search(r"m=audio (\d+)", text).group(1))  # type: ignore[union-attr]
+        self.remote_media = (ip, port)
+        profile = "RTP/AVP"
+        crypto_line: list[str] = []
+        m = re.search(r"a=crypto:(\S+) (\S+) inline:([A-Za-z0-9+/=]+)", text)
+        if m:
+            from pylibsrtp import Policy, Session
+
+            profile = "RTP/SAVP"
+            self.srtp_key = os.urandom(30)
+            prof = Policy.SRTP_PROFILE_AES128_CM_SHA1_80
+            self.outbound = Session(
+                Policy(key=self.srtp_key, ssrc_type=Policy.SSRC_ANY_OUTBOUND, srtp_profile=prof)
+            )
+            assert self.rtp is not None
+            self.rtp.inbound = Session(
+                Policy(
+                    key=base64.b64decode(m.group(3)),
+                    ssrc_type=Policy.SSRC_ANY_INBOUND,
+                    srtp_profile=prof,
+                )
+            )
+            crypto_line = [
+                f"a=crypto:{m.group(1)} {m.group(2)} inline:{base64.b64encode(self.srtp_key).decode()}"
+            ]
+        answer = "\r\n".join(
+            [
+                "v=0",
+                f"o=test 2 2 IN IP4 {self.local_ip}",
+                "s=-",
+                f"c=IN IP4 {self.local_ip}",
+                "t=0 0",
+                f"m=audio {self.rtp_port} {profile} 0 101",
+                "a=rtpmap:101 telephone-event/8000",
+                *crypto_line,
+                "a=sendrecv",
+                "",
+            ]
+        ).encode()
+        self.callee = True
+        self._respond_ok(
+            req,
+            to_tag=self.tag,
+            extra=[
+                f"Contact: <sip:{self.username}@{self.local_ip}:{self.local_port};transport={self.transport}>",
+                "Content-Type: application/sdp",
+            ],
+            body=answer,
+        )
+
+    def _respond_ok(
+        self,
+        req: bytes,
+        *,
+        status: str = "200 OK",
+        to_tag: str | None = None,
+        extra: list[str] | None = None,
+        body: bytes = b"",
+    ) -> None:
+        head = req.split(b"\r\n\r\n", 1)[0].decode().split("\r\n")
+        keep = []
+        for line in head[1:]:
+            name = line.split(":", 1)[0].lower()
+            if name == "to" and to_tag and "tag=" not in line:
+                line += f";tag={to_tag}"
+            if name in ("via", "from", "to", "call-id", "cseq"):
+                keep.append(line)
+        lines = [f"SIP/2.0 {status}", *keep, *(extra or []), f"Content-Length: {len(body)}"]
+        self._send(("\r\n".join(lines) + "\r\n\r\n").encode() + body)
 
     def _send(self, data: bytes) -> None:
         if self._udp is not None:
@@ -349,7 +430,22 @@ class TestPhone:
         await asyncio.sleep(0.1)
 
     async def bye(self) -> int:
-        self._request("BYE", f"sip:avb@{self.host}:{self.port}", to_tag=self.remote_tag)
+        if self.callee:  # in a call the server placed, the server's From is the remote side
+            t = self.transport.upper()
+            self.cseq += 1
+            lines = [
+                f"BYE sip:avb@{self.host}:{self.port} SIP/2.0",
+                f"Via: SIP/2.0/{t} {self.local_ip}:{self.local_port};branch=z9hG4bK{secrets.token_hex(6)};rport",
+                "Max-Forwards: 70",
+                f"From: <sip:{self.username}@{self.host}>;tag={self.tag}",
+                f"To: {self.remote_from}",
+                f"Call-ID: {self.call_id}",
+                f"CSeq: {self.cseq} BYE",
+                "Content-Length: 0",
+            ]
+            self._send(("\r\n".join(lines) + "\r\n\r\n").encode())
+        else:
+            self._request("BYE", f"sip:avb@{self.host}:{self.port}", to_tag=self.remote_tag)
         return (await self.response()).status
 
     def close(self) -> None:

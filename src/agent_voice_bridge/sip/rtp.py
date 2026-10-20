@@ -138,7 +138,7 @@ class RtpSession(asyncio.DatagramProtocol):
                     self._drained.set()
             else:
                 chunk = silence
-            if self.transport is not None:
+            if self.transport is not None and self.remote[1]:  # port 0: callee not answered yet
                 packet = self._packet(g711.encode(chunk, self.codec), self.codec)
                 if self.srtp is not None:
                     packet = self.srtp.protect(packet)

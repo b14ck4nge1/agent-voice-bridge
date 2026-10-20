@@ -3,6 +3,10 @@
 Sends a Bark alert whose tap dials this PC, answers the call, speaks a greeting, reads
 back every key you press, and hangs up on ``#``. It reports what happened, so you can
 check notification, network, audio in both directions and DTMF in one go.
+
+``--direct`` skips Bark: it waits for Linphone to register, then rings it from the
+server. On iOS that only rings while Linphone is open or was just in use, because
+without push iOS suspends the app and closes its connection.
 """
 
 from __future__ import annotations
@@ -13,13 +17,15 @@ import time
 from agent_voice_bridge.notify.bark import BarkError, BarkNotifier
 from agent_voice_bridge.phone import make_tts
 from agent_voice_bridge.phone_config import PhoneSettings
-from agent_voice_bridge.sip.server import SipCall, SipServer
+from agent_voice_bridge.sip.server import DialError, SipCall, SipServer
 from agent_voice_bridge.voice.audio import silence
 
 DIGIT_NAMES = {"*": "star", "#": "hash"}
 
 
-async def run_phone_test(*, seconds: int = 180, send_bark: bool = True) -> int:
+async def run_phone_test(
+    *, seconds: int = 180, send_bark: bool = True, direct: bool = False
+) -> int:
     try:
         settings = PhoneSettings.from_env()
     except ValueError as exc:
@@ -64,7 +70,21 @@ async def run_phone_test(*, seconds: int = 180, send_bark: bool = True) -> int:
     print(f"SIP server listening on {settings.sip.bind_host}:{settings.sip.port}")
     print(f"Dial link: {settings.dial_url}")
     try:
-        if send_bark:
+        if direct:
+            print("Open Linphone on the phone (keep it open) so it signs in to this server...")
+            deadline = time.monotonic() + seconds
+            while not server.phone_registered and time.monotonic() < deadline:
+                await asyncio.sleep(1)
+            if not server.phone_registered:
+                print(f"Linphone did not sign in within {seconds}s.")
+                return 1
+            print("Linphone signed in; calling it now.")
+            try:
+                await server.dial(ring_seconds=45)
+            except DialError as exc:
+                print(f"Call failed: {exc}")
+                return 1
+        elif send_bark:
             try:
                 await BarkNotifier(settings.bark).send(
                     "Agent Voice Bridge test", "Tap to call your PC.", settings.dial_url

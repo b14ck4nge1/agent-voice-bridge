@@ -86,7 +86,9 @@ def cmd_phone_test(args: argparse.Namespace) -> int:
     _load_phone_env()
     from agent_voice_bridge.phone_test import run_phone_test
 
-    return asyncio.run(run_phone_test(seconds=args.seconds, send_bark=not args.no_bark))
+    return asyncio.run(
+        run_phone_test(seconds=args.seconds, send_bark=not args.no_bark, direct=args.direct)
+    )
 
 
 def cmd_install_hooks(args: argparse.Namespace) -> int:
@@ -188,6 +190,11 @@ def main(argv: list[str] | None = None) -> None:
     )
     p.add_argument("--seconds", type=int, default=180, help="How long to wait for the call")
     p.add_argument("--no-bark", action="store_true", help="Don't send a notification; just wait")
+    p.add_argument(
+        "--direct",
+        action="store_true",
+        help="No Bark: wait for Linphone to sign in, then ring it from this server",
+    )
     p.set_defaults(func=cmd_phone_test)
 
     p = sub.add_parser(

@@ -111,3 +111,26 @@ def build_answer(
         lines.append(f"a=crypto:{crypto}")
     lines += ["a=ptime:20", f"a={direction}"]
     return ("\r\n".join(lines) + "\r\n").encode()
+
+
+def build_offer(
+    *, address: str, port: int, profile: str = "RTP/AVP", crypto: str | None = None
+) -> bytes:
+    """Offer for a call we place: PCMU, PCMA and DTMF (payload type 101)."""
+    sid = secrets.randbelow(2**31)
+    lines = [
+        "v=0",
+        f"o=avb {sid} {sid} IN IP4 {address}",
+        "s=Agent Voice Bridge",
+        f"c=IN IP4 {address}",
+        "t=0 0",
+        f"m=audio {port} {profile} 0 8 101",
+        "a=rtpmap:0 PCMU/8000",
+        "a=rtpmap:8 PCMA/8000",
+        "a=rtpmap:101 telephone-event/8000",
+        "a=fmtp:101 0-15",
+    ]
+    if crypto:
+        lines.append(f"a=crypto:{crypto}")
+    lines += ["a=ptime:20", "a=sendrecv"]
+    return ("\r\n".join(lines) + "\r\n").encode()

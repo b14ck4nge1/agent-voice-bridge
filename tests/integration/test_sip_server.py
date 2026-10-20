@@ -7,7 +7,13 @@ from pathlib import Path
 
 import pytest
 
-from agent_voice_bridge.sip.server import SipCall, SipServer, SipServerConfig, is_private_address
+from agent_voice_bridge.sip.server import (
+    DialError,
+    SipCall,
+    SipServer,
+    SipServerConfig,
+    is_private_address,
+)
 from tests.support.sip_client import TestPhone, goertzel, make_self_signed, tone
 
 PASSWORD = "correct-horse-battery-staple"
@@ -262,3 +268,59 @@ def test_weak_password_rejected() -> None:
 )
 def test_private_address(host: str, private: bool) -> None:
     assert is_private_address(host) is private
+
+
+@pytest.mark.parametrize("transport", ["udp", "tls"])
+async def test_server_dials_registered_phone(tmp_path: Path, transport: str) -> None:
+    cert, key = make_self_signed(tmp_path)
+    rec = Recorder()
+    tls = transport == "tls"
+    srv = SipServer(
+        SipServerConfig(
+            bind_host="127.0.0.1",
+            port=_port(),
+            tls_port=_port(),
+            password=PASSWORD,
+            udp=not tls,
+            tcp=False,
+            tls_cert=cert if tls else None,
+            tls_key=key if tls else None,
+            require_srtp=tls,
+        ),
+        rec,
+    )
+    await srv.start()
+    port = srv.config.tls_port if tls else srv.config.port
+    phone = TestPhone("127.0.0.1", port, "phone", PASSWORD, transport=transport, tls_ca=cert)
+    await phone.connect()
+    with pytest.raises(DialError, match="not registered"):
+        await srv.dial()
+    assert await phone.register() == 200
+
+    call = await srv.dial(ring_seconds=5)
+    await asyncio.sleep(0.1)
+    assert phone.requests_in.count("INVITE") >= 1 and "ACK" in phone.requests_in
+    assert (phone.srtp_key is not None) is tls  # SRTP offered over TLS
+    await phone.press("4")
+    await phone.send_audio(tone(440, 0.5))
+    await asyncio.sleep(0.3)
+    assert rec.digits == ["4"]
+    assert phone.rtp is not None and phone.rtp.rejected == 0
+    heard = bytes(phone.rtp.received[:8000])
+    assert goertzel(heard, 1000) > 20 * goertzel(heard, 440)
+    assert await phone.bye() == 200
+    await asyncio.wait_for(rec.done.wait(), 3)
+    assert call.ended.is_set() and not srv.calls
+    phone.close()
+    await srv.stop()
+
+
+async def test_dial_declined(server: tuple[SipServer, Recorder]) -> None:
+    srv, rec = server
+    phone = TestPhone("127.0.0.1", srv.config.port, "phone", PASSWORD, answer_status=486)
+    await phone.connect()
+    assert await phone.register() == 200
+    with pytest.raises(DialError, match="486"):
+        await srv.dial(ring_seconds=3)
+    assert rec.calls == [] and not srv.calls
+    phone.close()

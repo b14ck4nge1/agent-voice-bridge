@@ -81,3 +81,28 @@ def negotiate(offers: list[str]) -> tuple[SrtpContext, str]:
         )
         return ctx, f"{tag} {suite} inline:{base64.b64encode(local_key).decode()}"
     raise SrtpError("no supported SRTP crypto suite offered")
+
+
+def make_offer(suite: str = "AES_CM_128_HMAC_SHA1_80") -> tuple[bytes, str]:
+    """For calls we place: our key and the ``a=crypto`` value to offer."""
+    key = os.urandom(KEY_SALT_LEN)
+    return key, f"1 {suite} inline:{base64.b64encode(key).decode()}"
+
+
+def from_answer(local_key: bytes, offered_suite: str, answers: list[str]) -> SrtpContext:
+    """Build the context from the callee's ``a=crypto`` answer to our offer."""
+    for attr in answers:
+        parsed = _parse(attr)
+        if parsed is None or parsed[1] != offered_suite:
+            continue
+        profile = SUITES[offered_suite]
+        return SrtpContext(
+            inbound=Session(
+                Policy(key=parsed[2], ssrc_type=Policy.SSRC_ANY_INBOUND, srtp_profile=profile)
+            ),
+            outbound=Session(
+                Policy(key=local_key, ssrc_type=Policy.SSRC_ANY_OUTBOUND, srtp_profile=profile)
+            ),
+            suite=offered_suite,
+        )
+    raise SrtpError("callee did not accept our SRTP offer")

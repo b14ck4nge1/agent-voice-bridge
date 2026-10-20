@@ -60,6 +60,23 @@ On the PC: `.\.venv\Scripts\avb-admin test-approval`. Bark rings the iPhone; tap
 Linphone calls the server; you hear the request; press **1**, then **1** to approve.
 The PC prints `Decision: allow`.
 
+### Direct call test (no Bark)
+
+The server can also ring Linphone itself. It stops the bridge for a moment, because
+only one program can use port 5061:
+
+```bash
+cd ~/agent-voice-bridge/deploy
+sudo docker compose stop bridge
+sudo docker compose run --rm bridge avb-admin phone-test --direct
+sudo docker compose start bridge
+```
+
+Open Linphone and keep it open. Once it signs in, the server calls it; answer, listen,
+press keys (they are read back), and press **#** to finish. Without push, iOS suspends
+Linphone soon after it leaves the screen, so a direct call only rings while Linphone is
+open or was just in use. That is why approvals use Bark to wake the phone.
+
 ## Maintenance
 
 ```bash

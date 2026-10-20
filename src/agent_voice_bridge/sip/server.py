@@ -2,8 +2,10 @@
 
 Scope, on purpose: one SIP account (the iPhone's), digest-authenticated REGISTER
 and INVITE, G.711 audio, RFC 4733 DTMF, over UDP/TCP (private networks such as
-Tailscale) or TLS with SDES-SRTP (a public server). No proxying or forwarding. Calls come *from* the phone,
-started by the Bark notification, so the server never has to reach a sleeping phone.
+Tailscale) or TLS with SDES-SRTP (a public server). No proxying or forwarding. Calls normally
+come *from* the phone, started by the Bark notification, so the server never has to reach a
+sleeping phone. ``dial()`` can also ring the phone directly over the connection it registered
+on; on iOS that only works while Linphone is open (or was very recently).
 """
 
 from __future__ import annotations
@@ -34,7 +36,7 @@ from agent_voice_bridge.sip.message import (
     user_of,
 )
 from agent_voice_bridge.sip.rtp import RtpSession
-from agent_voice_bridge.sip.srtp import SrtpContext, SrtpError
+from agent_voice_bridge.sip.srtp import SrtpContext, SrtpError, from_answer, make_offer
 from agent_voice_bridge.sip.srtp import negotiate as srtp_negotiate
 
 log = logging.getLogger(__name__)
@@ -82,6 +84,11 @@ class _Peer:
     addr: tuple[str, int]
     local_ip: str
     send: Reply
+    closed: bool = False
+
+
+class DialError(Exception):
+    """A call we placed did not connect."""
 
 
 @dataclass
@@ -102,6 +109,7 @@ class SipCall:
     ended: asyncio.Event = field(default_factory=asyncio.Event)
     _cseq: int = 1
     _server: SipServer | None = None
+    ended_callbacks: list[Callable[[], object]] = field(default_factory=list)
 
     async def hangup(self) -> None:
         if self.ended.is_set():
@@ -121,6 +129,8 @@ class SipServer:
         self.on_call = on_call
         self.auth = DigestAuthenticator(config.realm, config.username, config.password)
         self.registration: tuple[str, float] | None = None  # (contact, expires_at)
+        self._reg_peer: _Peer | None = None  # where the phone registered from
+        self._client_tx: dict[str, asyncio.Queue[SipMessage]] = {}  # our INVITEs, by Call-ID
         self.calls: dict[str, SipCall] = {}
         self._pending_ack: dict[str, tuple[SipMessage, asyncio.Task[None]]] = {}
         self._recent: dict[tuple[str, int, str], bytes] = {}  # retransmission cache
@@ -264,6 +274,7 @@ class SipServer:
         except (ConnectionError, asyncio.IncompleteReadError):
             pass
         finally:
+            peer.closed = True
             writer.close()
 
     # -- dispatch -----------------------------------------------------------------------
@@ -275,7 +286,10 @@ class SipServer:
             log.debug("ignoring malformed SIP from %s: %s", peer.addr, exc)
             return
         if not msg.is_request:
-            return  # responses to our BYE need no handling
+            queue = self._client_tx.get(msg.call_id)
+            if queue is not None and msg.cseq[1] == "INVITE":
+                queue.put_nowait(msg)
+            return  # responses to our BYE/CANCEL need no handling
         try:
             seq, method = msg.cseq
         except SipParseError:
@@ -395,6 +409,7 @@ class SipServer:
             self._reply(peer, msg, 200, "OK")
             return
         self.registration = (uri_of(contact), time.time() + expires)
+        self._reg_peer = peer
         self._reply(
             peer,
             msg,
@@ -561,6 +576,8 @@ class SipServer:
             finally:
                 await call.hangup()
                 self.calls.pop(call.call_id, None)
+                for callback in call.ended_callbacks:
+                    callback()
 
         task = asyncio.get_running_loop().create_task(run())
         self._tasks.add(task)
@@ -581,6 +598,199 @@ class SipServer:
         if call is not None and msg.call_id in self._pending_ack:
             call.ended.set()
             call.rtp.close()
+
+    # -- calls we place -------------------------------------------------------------------
+
+    def _request(
+        self,
+        peer: _Peer,
+        method: str,
+        uri: str,
+        *,
+        branch: str,
+        from_: str,
+        to: str,
+        call_id: str,
+        cseq: int,
+        extra: list[tuple[str, str]] | None = None,
+        body: bytes = b"",
+    ) -> None:
+        port = self.config.tls_port if peer.kind == "tls" else self.config.port
+        req = SipMessage(method=method, uri=uri)
+        req.add("Via", f"SIP/2.0/{peer.kind.upper()} {peer.local_ip}:{port};branch={branch};rport")
+        req.add("Max-Forwards", "70")
+        req.add("From", from_)
+        req.add("To", to)
+        req.add("Call-ID", call_id)
+        req.add("CSeq", f"{cseq} {method}")
+        req.add("User-Agent", USER_AGENT)
+        for k, v in extra or []:
+            req.add(k, v)
+        if body:
+            req.add("Content-Type", "application/sdp")
+            req.body = body
+        peer.send(req.to_bytes())
+
+    async def dial(self, *, ring_seconds: float = 45) -> SipCall:
+        """Ring the registered phone directly; return the call once answered.
+
+        The call then runs ``on_call`` like an incoming one. Raises DialError if the
+        phone isn't reachable, declines, or doesn't answer within ``ring_seconds``.
+        """
+        peer = self._reg_peer
+        if not self.phone_registered or peer is None or peer.closed:
+            raise DialError("the phone is not registered (open Linphone first)")
+        if self.calls:
+            raise DialError("a call is already in progress")
+        assert self.registration is not None
+        target = self.registration[0]
+        call_id = f"{secrets.token_hex(12)}@avb"
+        local_tag = secrets.token_hex(6)
+        branch = f"z9hG4bK{secrets.token_hex(8)}"
+        from_ = f"<sip:avb@{self.config.realm}>;tag={local_tag}"
+        to = f"<sip:{self.config.username}@{self.config.realm}>"
+        secure = self.config.require_srtp or peer.kind == "tls"
+        suite = "AES_CM_128_HMAC_SHA1_80"
+        key, crypto = make_offer(suite) if secure else (b"", None)
+        call: SipCall | None = None
+
+        def on_dtmf(digit: str) -> None:
+            if call is not None:
+                call.dtmf.put_nowait(digit)
+
+        rtp, rtp_port = await RtpSession.open(
+            self.config.bind_host,
+            self.config.rtp_ports,
+            codec=0,
+            remote=("0.0.0.0", 0),  # noqa: S104 - set from the answer; nothing is sent before
+            telephone_event=101,
+            on_dtmf=on_dtmf,
+        )
+        offer = sdp.build_offer(
+            address=peer.local_ip,
+            port=rtp_port,
+            profile="RTP/SAVP" if secure else "RTP/AVP",
+            crypto=crypto,
+        )
+        queue: asyncio.Queue[SipMessage] = asyncio.Queue()
+        self._client_tx[call_id] = queue
+        contact = self._contact(peer)
+
+        def send_invite() -> None:
+            self._request(
+                peer,
+                "INVITE",
+                target,
+                branch=branch,
+                from_=from_,
+                to=to,
+                call_id=call_id,
+                cseq=1,
+                extra=[("Contact", contact), ("Allow", ALLOW)],
+                body=offer,
+            )
+
+        def ack(resp: SipMessage) -> None:
+            ok = resp.status == 200
+            self._request(
+                peer,
+                "ACK",
+                uri_of(resp.get("Contact") or "") or target if ok else target,
+                # A 2xx ACK is its own transaction; a non-2xx ACK reuses the INVITE branch.
+                branch=f"z9hG4bK{secrets.token_hex(8)}" if ok else branch,
+                from_=from_,
+                to=resp.get("To") or to,
+                call_id=call_id,
+                cseq=1,
+            )
+
+        log.info("SIP calling the phone at %s over %s", target, peer.kind.upper())
+        send_invite()
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + ring_seconds
+        resend, interval = loop.time() + T1, T1
+        provisional = False
+        try:
+            while True:
+                now = loop.time()
+                if now >= deadline:
+                    self._request(
+                        peer,
+                        "CANCEL",
+                        target,
+                        branch=branch,
+                        from_=from_,
+                        to=to,
+                        call_id=call_id,
+                        cseq=1,
+                    )
+                    raise DialError(f"no answer within {ring_seconds:.0f}s")
+                wait = deadline - now
+                if peer.kind == "udp" and not provisional:
+                    wait = min(wait, max(0.0, resend - now))
+                try:
+                    resp = await asyncio.wait_for(queue.get(), wait)
+                except TimeoutError:
+                    if peer.kind == "udp" and not provisional and loop.time() >= resend:
+                        send_invite()  # UDP: retransmit until the phone answers at all
+                        interval = min(interval * 2, 4.0)
+                        resend = loop.time() + interval
+                    continue
+                status = resp.status or 0
+                if status < 200:
+                    provisional = True
+                    if status == 180:
+                        log.info("SIP phone is ringing")
+                    continue
+                ack(resp)
+                if status >= 300:
+                    raise DialError(f"phone answered {status} {resp.reason}")
+                break
+            answer = sdp.parse_offer(resp.body)
+            codec = sdp.choose_codec(answer)
+            if codec is None:
+                raise DialError("phone answered without PCMU/PCMA")
+            if secure:
+                try:
+                    rtp.srtp = from_answer(key, suite, answer.crypto)
+                except SrtpError as exc:
+                    raise DialError(str(exc)) from exc
+            rtp.codec = codec
+            rtp.telephone_event = answer.telephone_event
+            rtp.allowed_hosts = {answer.address, peer.addr[0]}
+            rtp.remote = (answer.address, answer.port)
+        except BaseException:
+            rtp.close()
+            self._client_tx.pop(call_id, None)
+            raise
+        call = SipCall(
+            call_id=call_id,
+            caller=self.config.username,
+            peer=peer,
+            rtp=rtp,
+            local_tag=local_tag,
+            remote_from=resp.get("To") or to,
+            local_to=from_,
+            remote_contact=uri_of(resp.get("Contact") or "") or target,
+            rtp_port=rtp_port,
+            answer_sdp=offer,
+            _server=self,
+        )
+        self.calls[call_id] = call
+        log.info("SIP phone answered our call")
+
+        async def re_ack() -> None:  # the 200 is retransmitted if our ACK was lost
+            with contextlib.suppress(asyncio.CancelledError):
+                while not call.ended.is_set():
+                    r = await queue.get()
+                    if r.status == 200:
+                        ack(r)
+
+        reack = loop.create_task(re_ack())
+        call.ended_callbacks.append(reack.cancel)
+        call.ended_callbacks.append(lambda: self._client_tx.pop(call_id, None))
+        self._start_call(call)
+        return call
 
     def _send_bye(self, call: SipCall) -> None:
         if self.calls.get(call.call_id) is call:

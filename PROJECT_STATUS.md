@@ -15,9 +15,10 @@ Codex request.
 
 **Two phone modes** (choose with `deploy/linphone.sh`): *bark-sip* (above) and
 *linphone*, where the bridge signs in to sip.linphone.org with its own account and calls
-yours, so Linphone's push rings the phone with no Bark. The linphone mode passes tests
-against a simulated provider; it has **not** been tried with sip.linphone.org yet
-([docs/linphone-account.md](docs/linphone-account.md)).
+yours, so Linphone's push rings the phone with no Bark. User report 2026-10-20: the
+linphone mode's test call (`deploy/linphone.sh test`) worked with real sip.linphone.org
+accounts ([docs/linphone-account.md](docs/linphone-account.md)). Still to test: a real
+Claude Code / Codex request end to end, locked phone, cellular.
 
 ## Completed (with evidence)
 

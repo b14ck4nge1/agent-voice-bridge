@@ -24,7 +24,7 @@ that marked them done.
 | ID | Task | Pri | Deps | Status | Acceptance criteria | Evidence |
 |---|---|---|---|---|---|---|
 | HW-01 | Linphone Desktop → Linphone iOS: locked/killed, cellular, two-way audio | **P0** | – | **BLOCKED (AWAITING USER)** | T1–T8 in the HW-01 doc pass and call stats recorded | docs/hardware-tests/HW-01-linphone-push.md |
-| SIP-01 | Python SIP UA: REGISTER over TLS + digest auth to sip.linphone.org | P0 | HW-01 | IN REVIEW (simulated provider; real account untested) | Registers, refreshes, survives a network change; tested against sip.linphone.org | – |
+| SIP-01 | Python SIP UA: REGISTER over TLS + digest auth to sip.linphone.org | P0 | HW-01 | IN REVIEW (real sip.linphone.org test call worked, user report 2026-10-20) | Registers, refreshes, survives a network change; tested against sip.linphone.org | – |
 | SIP-02 | Outbound INVITE with SDES-SRTP offer (PCMU/PCMA), BYE/CANCEL | P0 | SIP-01 | IN REVIEW (simulated provider) | Linphone Desktop on LAN answers; SRTP negotiated | – |
 | SIP-03 | ICE (aioice) with stun.linphone.org | P0 | SIP-02 | BACKLOG | Media flows iPhone (cellular) ↔ PC (home NAT) | – |
 | SIP-04 | `SipDispatcher` implementing `CallDispatcher` + call events | P0 | SIP-02 | BACKLOG | Bridge request rings the phone; events update state | – |

@@ -43,6 +43,6 @@ Unanswered calls are retried (`AVB_LINPHONE_RETRIES`, default 3, a minute apart)
 | `phone answered without SRTP` | Set media encryption to SRTP for your account in Linphone |
 | Call connects, no audio | UDP 40000-40200 not open in the AWS security group, or wrong `AVB_SIP_MEDIA_IP` |
 
-Not tested on a real phone yet: this was built and tested against a simulated
-sip.linphone.org. Whether sip.linphone.org accepts the bridge's sign-in and how its
-media behaves are confirmed only by your first test call.
+First real test (user report, 2026-10-20): `deploy/linphone.sh test` called the
+iPhone through sip.linphone.org and worked. Locked-phone and cellular behaviour are
+not recorded yet.

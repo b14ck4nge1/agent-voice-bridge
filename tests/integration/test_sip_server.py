@@ -14,9 +14,17 @@ PASSWORD = "correct-horse-battery-staple"
 
 
 def _port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return int(s.getsockname()[1])
+    """A port free for both TCP and UDP (on Windows, some UDP ports are reserved)."""
+    for _ in range(50):
+        with socket.socket() as t, socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as u:
+            t.bind(("127.0.0.1", 0))
+            port = int(t.getsockname()[1])
+            try:
+                u.bind(("127.0.0.1", port))
+            except OSError:
+                continue
+            return port
+    raise RuntimeError("no free port")
 
 
 class Recorder:

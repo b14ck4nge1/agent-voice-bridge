@@ -162,7 +162,13 @@ class SipServer:
                     try:
                         await asyncio.wait_for(writer.start_tls(ctx), 15)
                     except (ssl.SSLError, OSError, TimeoutError) as exc:
-                        log.warning("TLS handshake with %s failed: %s", peer, exc)
+                        log.warning(
+                            "TLS handshake with %s failed: %s %s (timeout means the client "
+                            "never sent a TLS hello: it may be using UDP/TCP, not TLS)",
+                            peer,
+                            type(exc).__name__,
+                            exc,
+                        )
                         writer.close()
                         return
                 await self._on_tcp(reader, writer, kind="tls")

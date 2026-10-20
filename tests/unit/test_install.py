@@ -103,9 +103,8 @@ def test_repo_cloud_hook_copy_is_current() -> None:
 
     root = Path(__file__).resolve().parents[2]
     copy = root / ".claude" / "hooks" / "avb-hook.py"
+
     def text(path: Path) -> str:  # line endings may differ after a Windows checkout
         return path.read_text(encoding="utf-8").replace("\r\n", "\n")
 
-    assert text(copy) == text(Path(hook.__file__)), (
-        "run: avb-admin install-cloud-hook --repo ."
-    )
+    assert text(copy) == text(Path(hook.__file__)), "run: avb-admin install-cloud-hook --repo ."

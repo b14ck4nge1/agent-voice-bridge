@@ -56,3 +56,56 @@ def test_render_never_widens_permissions() -> None:
     deny = json.loads(render(Outcome("deny", "no")) or "")
     assert deny["hookSpecificOutput"]["decision"] == {"behavior": "deny", "message": "no"}
     assert render(Outcome(None)) is None
+
+
+def test_cloud_hook_install_and_remove(tmp_path: Path) -> None:
+    import json
+    import subprocess
+    import sys
+
+    from agent_voice_bridge.agents.install import CLOUD_HOOK_FILE, install_cloud_hook
+
+    repo = tmp_path / "repo"
+    (repo / ".claude").mkdir(parents=True)
+    (repo / ".claude" / "settings.json").write_text(
+        json.dumps({"permissions": {"allow": ["Bash(ls)"]}})
+    )
+    install_cloud_hook(repo)
+    settings = json.loads((repo / ".claude" / "settings.json").read_text())
+    assert settings["permissions"] == {"allow": ["Bash(ls)"]}  # kept
+    cmd = settings["hooks"]["PermissionRequest"][0]["hooks"][0]["command"]
+    assert "--cloud" in cmd and cmd.startswith('test -n "$AVB_AGENT_TOKEN"')
+    assert not list((repo / ".claude").glob("*.avb-backup-*"))  # git keeps history
+
+    # The copied file runs on its own, and without a token it decides nothing.
+    hook = repo / CLOUD_HOOK_FILE
+    out = subprocess.run(
+        [sys.executable, "-I", str(hook), "--cloud", "--agent", "claude-code"],
+        input="{}",
+        capture_output=True,
+        text=True,
+        env={"PATH": "/usr/bin:/bin", "SYSTEMROOT": "C:\\Windows"},
+        timeout=30,
+    )
+    assert out.returncode == 0 and out.stdout == ""
+
+    install_cloud_hook(repo, remove=True)
+    assert not hook.exists()
+    assert (
+        "hooks" not in json.loads((repo / ".claude" / "settings.json").read_text())
+        or not (json.loads((repo / ".claude" / "settings.json").read_text())["hooks"])
+    )
+
+
+def test_repo_cloud_hook_copy_is_current() -> None:
+    """This repository's own cloud hook is a copy of the hook; keep them identical."""
+    from agent_voice_bridge.agents import hook
+
+    root = Path(__file__).resolve().parents[2]
+    copy = root / ".claude" / "hooks" / "avb-hook.py"
+    def text(path: Path) -> str:  # line endings may differ after a Windows checkout
+        return path.read_text(encoding="utf-8").replace("\r\n", "\n")
+
+    assert text(copy) == text(Path(hook.__file__)), (
+        "run: avb-admin install-cloud-hook --repo ."
+    )

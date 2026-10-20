@@ -35,7 +35,29 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NoReturn
 
-from agent_voice_bridge.config import default_data_dir, load_env_file
+try:
+    from agent_voice_bridge.config import default_data_dir, load_env_file
+except ImportError:  # running as a single copied file (a repository's cloud-session hook)
+
+    def default_data_dir() -> Path:
+        if os.name == "nt":
+            base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+            return base / "AgentVoiceBridge"
+        return (
+            Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+            / "agent-voice-bridge"
+        )
+
+    def load_env_file(path: Path) -> bool:
+        if not path.is_file():
+            return False
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, _, value = line.partition("=")
+                os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+        return True
+
 
 AGENTS = {"claude-code": "claude_code", "codex": "codex"}
 DEFAULT_URL = "http://127.0.0.1:8765"
@@ -258,7 +280,16 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="Give up after this long; must be shorter than the hook timeout configured in the agent",
     )
+    parser.add_argument(
+        "--cloud",
+        action="store_true",
+        help="Repository hook for cloud sessions: act only when AVB_AGENT_TOKEN is in the "
+        "environment (set in the cloud environment's settings); otherwise do nothing, so "
+        "on your PC the hook from your own settings decides.",
+    )
     args = parser.parse_args(argv)
+    if args.cloud and not os.environ.get("AVB_AGENT_TOKEN"):
+        raise SystemExit(0)  # no decision: the agent's normal prompt (or another hook)
 
     def failure(reason: str) -> NoReturn:
         _stderr(f"avb-hook: {reason}\n")
@@ -283,7 +314,8 @@ def main(argv: list[str] | None = None) -> None:
         except (ValueError, UnicodeDecodeError) as exc:
             failure(f"invalid hook input: {exc}")
 
-        load_env_file(Path(os.environ.get("AVB_HOOK_ENV", default_data_dir() / "hook.env")))
+        if not args.cloud:
+            load_env_file(Path(os.environ.get("AVB_HOOK_ENV", default_data_dir() / "hook.env")))
         token = os.environ.get("AVB_AGENT_TOKEN", "")
         if not token:
             failure("AVB_AGENT_TOKEN is not set")

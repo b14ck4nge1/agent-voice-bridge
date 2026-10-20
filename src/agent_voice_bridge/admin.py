@@ -166,6 +166,23 @@ def cmd_test_approval(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_install_cloud_hook(args: argparse.Namespace) -> int:
+    repo = Path(args.repo).resolve()
+    if not (repo / ".git").exists():
+        print(f"{repo} is not a git repository", file=sys.stderr)
+        return 2
+    changed = install.install_cloud_hook(repo, wait_seconds=args.wait_seconds, remove=args.remove)
+    for path in changed:
+        print(f"{'Updated' if args.remove else 'Wrote'} {path}")
+    if not args.remove:
+        print(
+            "Commit and push these files. Then in the cloud environment's settings add the\n"
+            "variables AVB_BRIDGE_URL and AVB_AGENT_TOKEN, and allow your server's domain\n"
+            "under network access (see docs/cloud-sessions.md)."
+        )
+    return 0
+
+
 def cmd_stt_test(_: argparse.Namespace) -> int:
     from agent_voice_bridge.assistant.stt import stt_test
 
@@ -221,6 +238,12 @@ def main(argv: list[str] | None = None) -> None:
     )
     p.add_argument("--seconds", type=int, default=180)
     p.set_defaults(func=cmd_test_approval)
+
+    p = sub.add_parser("install-cloud-hook", help="Make a repository's cloud sessions ask by phone")
+    p.add_argument("--repo", default=".", help="The repository (default: current folder)")
+    p.add_argument("--remove", action="store_true")
+    p.add_argument("--wait-seconds", type=int, default=300)
+    p.set_defaults(func=cmd_install_cloud_hook)
 
     p = sub.add_parser("brain-test", help="Check the assistant's LLM settings (incl. tool calls)")
     p.set_defaults(func=cmd_brain_test)

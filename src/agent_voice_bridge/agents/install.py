@@ -95,21 +95,23 @@ def _load(path: Path) -> dict[str, Any]:
     return data
 
 
-def _write(path: Path, data: dict[str, Any], *, dry_run: bool) -> str:
+def _write(path: Path, data: dict[str, Any], *, dry_run: bool, backup: bool = True) -> str:
     text = json.dumps(data, indent=2) + "\n"
     if dry_run:
         return text
     path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        backup = path.with_name(f"{path.name}.avb-backup-{time.strftime('%Y%m%d-%H%M%S')}")
-        shutil.copy2(path, backup)
+    if path.exists() and backup:
+        copy = path.with_name(f"{path.name}.avb-backup-{time.strftime('%Y%m%d-%H%M%S')}")
+        shutil.copy2(path, copy)
     tmp = path.with_name(path.name + ".avb-tmp")
     tmp.write_text(text, encoding="utf-8")
     os.replace(tmp, path)
     return text
 
 
-def update_config(path: Path, entry: dict[str, Any] | None, *, dry_run: bool = False) -> str:
+def update_config(
+    path: Path, entry: dict[str, Any] | None, *, dry_run: bool = False, backup: bool = True
+) -> str:
     """Add ``entry`` (or just remove ours when None) under hooks.PermissionRequest."""
     data = _load(path)
     hooks = data.setdefault("hooks", {})
@@ -122,7 +124,44 @@ def update_config(path: Path, entry: dict[str, Any] | None, *, dry_run: bool = F
         hooks["PermissionRequest"] = groups
     else:
         hooks.pop("PermissionRequest", None)
-    return _write(path, data, dry_run=dry_run)
+    return _write(path, data, dry_run=dry_run, backup=backup)
+
+
+CLOUD_HOOK_FILE = ".claude/hooks/avb-hook.py"
+
+
+def cloud_entry(wait_seconds: int) -> dict[str, Any]:
+    """Runs in cloud sessions (Linux); does nothing where AVB_AGENT_TOKEN isn't set."""
+    return {
+        "matcher": "*",
+        "hooks": [
+            {
+                "type": "command",
+                # The shell test keeps it silent on your PC (no token in the environment;
+                # Windows may not even have python3), where your own hook decides.
+                "command": f'test -n "$AVB_AGENT_TOKEN" && python3 '
+                f'"$CLAUDE_PROJECT_DIR/{CLOUD_HOOK_FILE}" --cloud --agent claude-code '
+                f"--wait-seconds {wait_seconds} || true",
+                "timeout": HOOK_TIMEOUT_SECONDS,
+            }
+        ],
+    }
+
+
+def install_cloud_hook(repo: Path, *, wait_seconds: int = 300, remove: bool = False) -> list[Path]:
+    """Copy the hook into ``repo`` and add it to the repo's ``.claude/settings.json``."""
+    from agent_voice_bridge.agents import hook
+
+    target = repo / CLOUD_HOOK_FILE
+    settings = repo / ".claude" / "settings.json"
+    if remove:
+        target.unlink(missing_ok=True)
+        update_config(settings, None, backup=False)
+        return [settings]
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(hook.__file__, target)
+    update_config(settings, cloud_entry(wait_seconds), backup=False)
+    return [target, settings]
 
 
 def claude_settings_path() -> Path:

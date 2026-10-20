@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PermissionRequest": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "test -n \"$AVB_AGENT_TOKEN\" && python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/avb-hook.py\" --cloud --agent claude-code --wait-seconds 300 || true",
+            "timeout": 330
+          }
+        ]
+      }
+    ]
+  }
+}

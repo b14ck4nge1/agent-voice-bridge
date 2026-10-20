@@ -32,6 +32,17 @@ that marked them done.
 | SIP-05 | TURN support (only if HW-01/02 show relay needed) | P1 | HW-01 | BACKLOG | Media over cellular via TURN | – |
 | SIP-06 | Asterisk fallback config (WSL2) | P2 | – | BACKLOG | Documented, tested originate via ARI | – |
 
+### Phase 1b: Bark + own SIP server (ADR-0005, current default)
+
+| ID | Task | Pri | Deps | Status | Acceptance criteria | Evidence |
+|---|---|---|---|---|---|---|
+| PB-01 | Bark notifier (AES-GCM, critical, call=1, dial URL) | P0 | – | DONE | Payload matches Bark app format | `notify/bark.py`, `tests/unit/test_bark.py` |
+| PB-02 | SIP registrar + UAS (UDP/TCP, digest MD5/SHA-256, G.711, DTMF, lockout) | P0 | – | DONE | Tests + independent client interop | `sip/`, `tests/integration/test_sip_server.py`, pyVoIP spike (PROJECT_STATUS) |
+| PB-03 | Call flow: TTS prompts, keypad decisions, barge-in, silence timeout | P0 | PB-02 | DONE | E2E with real hook process | `voice/phone_call.py`, `tests/end_to_end/test_phone_e2e.py` |
+| PB-04 | Windows setup script + phone-test command | P0 | PB-03 | TESTING | Script parses in CI; user run pending | `scripts/setup-phone.ps1`, `phone_test.py` |
+| HW-03 | Real iPhone test of the full path | P0 | PB-04 | BLOCKED (AWAITING USER) | Bark rings locked phone; tap → call → hear prompts → keys work | docs/phone-setup.md |
+| VO-07 | Speech recognition instead of keypad | P1 | HW-03 | READY | Spoken approve/reject works on the phone | – |
+
 ## Phase 2: approval bridge
 
 | ID | Task | Pri | Deps | Status | Acceptance criteria | Evidence |

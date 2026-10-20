@@ -1,5 +1,7 @@
 # SIP setup
 
+> **Superseded as the default** by [phone-setup.md](phone-setup.md) (Bark + Tailscale + the bridge's own SIP server, ADR-0005). This page applies only if you use a sip.linphone.org account.
+
 Status: **the bridge's SIP user agent is not implemented yet** (task SIP-01). This
 page describes the target setup so the accounts can be prepared and HW-01 run.
 

@@ -1,5 +1,7 @@
 # iPhone setup
 
+> **Superseded as the default** by [phone-setup.md](phone-setup.md) (Bark + Tailscale + the bridge's own SIP server, ADR-0005). This page applies only if you use a sip.linphone.org account.
+
 Status: instructions for the Phase 1 hardware test. **Not yet validated on a device
 by this project.**
 

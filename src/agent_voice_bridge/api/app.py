@@ -7,7 +7,7 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
@@ -48,7 +48,9 @@ def create_app(
     *,
     dispatcher: CallDispatcher | None = None,
     store: Store | None = None,
+    extension: Callable[[ApprovalService], AbstractAsyncContextManager[None]] | None = None,
 ) -> FastAPI:
+    """``extension`` runs for the app's lifetime with the service, e.g. the SIP server."""
     settings.validate()
     store = store or Store(settings.db_path)
     service = ApprovalService(store, settings, dispatcher or LoggingDispatcher())
@@ -67,7 +69,11 @@ def create_app(
 
         task = asyncio.create_task(sweeper())
         try:
-            yield
+            if extension is None:
+                yield
+            else:
+                async with extension(service):
+                    yield
         finally:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):

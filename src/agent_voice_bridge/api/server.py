@@ -24,12 +24,21 @@ def main(argv: list[str] | None = None) -> None:
 
     load_env_file(default_data_dir() / "bridge.env")
     settings = Settings.from_env()
-    if settings.call_dispatcher != "log":
+    if settings.call_dispatcher == "log":
+        app = create_app(settings, dispatcher=LoggingDispatcher())
+    elif settings.call_dispatcher == "bark-sip":
+        from agent_voice_bridge.phone import PhoneStack
+        from agent_voice_bridge.phone_config import PhoneSettings
+
+        try:
+            phone = PhoneStack(PhoneSettings.from_env())
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        app = create_app(settings, dispatcher=phone.dispatcher, extension=phone.run)
+    else:
         raise SystemExit(
-            f"AVB_CALL_DISPATCHER={settings.call_dispatcher!r} is not available yet; "
-            "only 'log' ships in this release (see PROJECT_STATUS.md)"
+            f"Unknown AVB_CALL_DISPATCHER={settings.call_dispatcher!r} (use log or bark-sip)"
         )
-    app = create_app(settings, dispatcher=LoggingDispatcher())
     uvicorn.run(
         app, host=settings.host, port=settings.port, log_level=args.log_level, access_log=False
     )

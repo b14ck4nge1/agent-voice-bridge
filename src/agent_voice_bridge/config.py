@@ -76,8 +76,7 @@ class Settings:
     high_risk_policy: HighRiskPolicy = HighRiskPolicy.TOTP
     totp_secret: str | None = None
     sweep_interval_seconds: float = 2.0
-    call_dispatcher: str = "log"  # "log", "simulated" (tests), later "sip"
-    sip_target_uri: str | None = None
+    call_dispatcher: str = "log"  # "log" (no calls) or "bark-sip" (see phone_config.py)
     allow_remote_bind: bool = False
 
     @classmethod
@@ -96,7 +95,6 @@ class Settings:
             high_risk_policy=HighRiskPolicy(_env("AVB_HIGH_RISK_POLICY") or "totp"),
             totp_secret=_env("AVB_TOTP_SECRET"),
             call_dispatcher=_env("AVB_CALL_DISPATCHER", "log") or "log",
-            sip_target_uri=_env("AVB_SIP_TARGET_URI"),
             allow_remote_bind=_env_bool("AVB_ALLOW_REMOTE_BIND", False),
         )
 

@@ -1,5 +1,7 @@
 # HW-01: Does a free Linphone call ring your locked iPhone, with audio, across networks?
 
+> **Superseded as the default** by [phone-setup.md](../phone-setup.md) (Bark + Tailscale + the bridge's own SIP server, ADR-0005). This page applies only if you use a sip.linphone.org account.
+
 **Why this first.** It's the project's biggest risk, and it needs no code from this
 repository. If two stock Linphone apps on free sip.linphone.org accounts can't do
 this, our own SIP code won't either, and the architecture has to change

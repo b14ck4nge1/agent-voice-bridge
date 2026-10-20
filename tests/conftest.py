@@ -6,6 +6,7 @@ import socket
 import threading
 import time
 from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -107,12 +108,12 @@ def _free_port() -> int:
         return int(s.getsockname()[1])
 
 
-@pytest.fixture
-def live_bridge(settings: Settings) -> Iterator[LiveBridge]:
+@contextmanager
+def run_bridge(settings: Settings, dispatcher: object, extension: object = None) -> Iterator[str]:
+    """Run the real app under uvicorn in a thread; yields its base URL."""
     port = _free_port()
     live_settings = replace(settings, port=port)
-    disp = RecordingDispatcher()
-    app = create_app(live_settings, dispatcher=disp)
+    app = create_app(live_settings, dispatcher=dispatcher, extension=extension)  # type: ignore[arg-type]
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
@@ -126,6 +127,15 @@ def live_bridge(settings: Settings) -> Iterator[LiveBridge]:
             time.sleep(0.05)
     else:
         raise RuntimeError("bridge did not start")
-    yield LiveBridge(url, live_settings, disp)
-    server.should_exit = True
-    thread.join(timeout=10)
+    try:
+        yield url
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
+
+
+@pytest.fixture
+def live_bridge(settings: Settings) -> Iterator[LiveBridge]:
+    disp = RecordingDispatcher()
+    with run_bridge(settings, disp) as url:
+        yield LiveBridge(url, settings, disp)

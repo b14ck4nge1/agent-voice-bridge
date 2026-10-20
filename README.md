@@ -1,11 +1,14 @@
 # Agent Voice Bridge
 
 **Status: pre-alpha.** The approval bridge, the Claude Code / Codex hooks, the Codex
-app-server client and the conversation logic work and are tested. **Phone calls do
-not work yet:** the SIP user agent and speech are the next phase, and the decisive
-iPhone test ([HW-01](docs/hardware-tests/HW-01-linphone-push.md)) hasn't been run.
-Until then, a text simulator stands in for the call. See
-[PROJECT_STATUS.md](PROJECT_STATUS.md).
+app-server client, a built-in SIP server and a keypad + text-to-speech call flow work
+and are tested in software. **It has not yet been tried on a real iPhone**; see
+[phone-setup.md](docs/phone-setup.md) and [PROJECT_STATUS.md](PROJECT_STATUS.md).
+Speech recognition (talking instead of pressing keys) is next.
+
+How the phone part works: a pending approval sends a ringing **Bark** notification;
+tapping it makes **Linphone** call the bridge's own SIP server over **Tailscale**.
+No phone number, Linphone account or paid service.
 
 When Claude Code or OpenAI Codex on your Windows PC needs permission, Agent Voice
 Bridge is meant to **ring your iPhone over the internet**: no phone number, no
@@ -35,9 +38,15 @@ Claude Code / Codex ──PermissionRequest hook──► avb-hook ──► app
   routed to the bridge.
 * `avb-voice-sim`: answer approval "calls" by typing, using the same conversation
   engine the phone call will use.
-* 122 automated tests: unit, integration, and end-to-end with real hook processes.
+* Built-in SIP server, Bark wake-up and a keypad call flow with spoken prompts.
+* 171 automated tests: unit, integration, and end-to-end with real hook processes and SIP calls.
 
-## Quick start (Windows)
+## Quick start with the phone (Windows)
+
+See [docs/phone-setup.md](docs/phone-setup.md): one script (`scripts/setup-phone.ps1`)
+installs everything and writes the exact values to enter on the iPhone.
+
+## Quick start without the phone (Windows)
 
 ```powershell
 git clone https://github.com/b14ck4nge1/agent-voice-bridge.git

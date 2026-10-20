@@ -1,6 +1,6 @@
 # Project status
 
-Last updated: 2026-10-20 (session 1).
+Last updated: 2026-10-20 (session 1, part 2: phone path).
 
 ## Summary
 
@@ -36,6 +36,24 @@ networks, is untested and waits on you: [HW-01](docs/hardware-tests/HW-01-linpho
 * **Not run:** the PowerShell scripts on a personal Windows PC, a real Claude Code
   or Codex session, any SIP call, any iPhone test.
 
+## Phone path (added in part 2, ADR-0005)
+
+Built because a sip.linphone.org account couldn't be created:
+Bark notification (encrypted, critical, ringing) → tap → Linphone calls the bridge's
+own SIP server over Tailscale → spoken prompts (Windows SAPI / espeak-ng) → keypad
+decision.
+
+* Verified in upstream source: Bark opens the notification URL on tap; Linphone iOS
+  places a call for `linphone-sip:` URLs; Bark's AES-GCM format.
+* SIP server tested against an **independent client (pyVoIP 1.6.8)**: digest
+  REGISTER and INVITE accepted, two-way audio confirmed by frequency analysis
+  (server heard the 440 Hz test tone, client heard the 1 kHz one).
+* liblinphone 5.2 (Debian) and baresip couldn't run in the sandbox (no IPv6 in the
+  kernel), so **no Linphone-to-bridge call has been tested yet**.
+* `avb-admin phone-test` smoke test (test client dialling in, keys 4 2 #): answered,
+  speech played, keys read back, bridge hung up.
+* Tests: **171 passed, 1 skipped** (Windows SAPI test, which runs on the Windows CI runner).
+
 ## Current work
 
 None in progress. The next engineering task, SIP-01 (TLS registration to
@@ -45,7 +63,8 @@ sip.linphone.org), should wait for HW-01's result.
 
 | ID | Blocker | Needs |
 |---|---|---|
-| HW-01 | Real-device push/audio test | You: iPhone + Linphone + 2 free accounts (~45 min) |
+| HW-03 | Real iPhone: Bark → tap → Linphone calls PC over Tailscale, audio + keypad | You: run `scripts/setup-phone.ps1`, then `avb-admin phone-test` (~20 min) |
+| HW-01 | (Only for the Linphone-account path) | A sip.linphone.org account, which couldn't be created |
 | CC-04 | Hook inside real Claude Code on Windows | You: run the quick start, try approve/reject/timeout |
 | CX-04 | Hook inside real Codex CLI and the VS Code extension | You: same, plus trusting the hook in Codex |
 | R-07 | sip.linphone.org terms for automated accounts | linphone.org was unreachable from the research sandbox |

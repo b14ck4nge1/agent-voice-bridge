@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import os
 import secrets
+import string
 import sys
 from pathlib import Path
 
 from agent_voice_bridge.agents import install
-from agent_voice_bridge.config import default_data_dir
+from agent_voice_bridge.config import default_data_dir, load_env_file
 from agent_voice_bridge.security import totp
 
 
@@ -29,10 +31,19 @@ def cmd_init(args: argparse.Namespace) -> int:
     agent_token = secrets.token_urlsafe(32)
     voice_token = secrets.token_urlsafe(32)
     totp_secret = totp.generate_secret()
+    sip_password = secrets.token_urlsafe(18)
+    alphabet = string.ascii_letters + string.digits
+    bark_key = "".join(secrets.choice(alphabet) for _ in range(32))
     _write_private(
         bridge_env,
         "# Agent Voice Bridge server secrets. Keep private.\n"
-        f"AVB_AGENT_TOKEN={agent_token}\nAVB_VOICE_TOKEN={voice_token}\nAVB_TOTP_SECRET={totp_secret}\n",
+        f"AVB_AGENT_TOKEN={agent_token}\nAVB_VOICE_TOKEN={voice_token}\nAVB_TOTP_SECRET={totp_secret}\n"
+        "\n# Phone path (docs/phone-setup.md). Fill in the two blanks, then set the dispatcher.\n"
+        "# AVB_CALL_DISPATCHER=bark-sip\n"
+        "AVB_BARK_DEVICE_KEY=\n"
+        f"AVB_BARK_ENCRYPTION_KEY={bark_key}\n"
+        "AVB_SIP_BIND=\n"
+        f"AVB_SIP_PASSWORD={sip_password}\n",
     )
     _write_private(
         hook_env,
@@ -44,7 +55,38 @@ def cmd_init(args: argparse.Namespace) -> int:
         "Add this TOTP secret to an authenticator app on your phone (needed for high-risk approvals):"
     )
     print(f"  {totp.provisioning_uri(totp_secret)}")
+    print("Phone setup values (SIP password, Bark key) are in bridge.env; see docs/phone-setup.md.")
     return 0
+
+
+def _load_phone_env() -> None:
+    load_env_file(default_data_dir() / "bridge.env")
+
+
+def cmd_phone_info(_: argparse.Namespace) -> int:
+    _load_phone_env()
+    bind = os.environ.get("AVB_SIP_BIND", "<this PC's Tailscale IP>")
+    port = os.environ.get("AVB_SIP_PORT", "5060")
+    print("Linphone (iPhone) -> Use SIP account (third-party):")
+    print(f"  Username:  {os.environ.get('AVB_SIP_USERNAME', 'phone')}")
+    print("  Password:  (AVB_SIP_PASSWORD in bridge.env)")
+    print(f"  Domain:    {os.environ.get('AVB_SIP_PUBLIC_HOST', bind)}:{port}")
+    print(f"  Transport: {os.environ.get('AVB_SIP_TRANSPORT', 'udp').upper()}")
+    print(
+        "  Then in the account's advanced settings: media encryption None (or leave SRTP optional),"
+    )
+    print("  push notifications off (they only work for Linphone's own accounts).")
+    print(
+        "Bark -> Settings -> Encryption: AES256, GCM, key = AVB_BARK_ENCRYPTION_KEY from bridge.env"
+    )
+    return 0
+
+
+def cmd_phone_test(args: argparse.Namespace) -> int:
+    _load_phone_env()
+    from agent_voice_bridge.phone_test import run_phone_test
+
+    return asyncio.run(run_phone_test(seconds=args.seconds, send_bark=not args.no_bark))
 
 
 def cmd_install_hooks(args: argparse.Namespace) -> int:
@@ -97,6 +139,16 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--wait-seconds", type=int, default=300)
     p.add_argument("--hook-path", help="Override the avb-hook executable path")
     p.set_defaults(func=cmd_install_hooks)
+
+    p = sub.add_parser("phone-info", help="Show what to enter in Linphone and Bark")
+    p.set_defaults(func=cmd_phone_info)
+
+    p = sub.add_parser(
+        "phone-test", help="Send a Bark alert and answer one test call (keypad echo)"
+    )
+    p.add_argument("--seconds", type=int, default=180, help="How long to wait for the call")
+    p.add_argument("--no-bark", action="store_true", help="Don't send a notification; just wait")
+    p.set_defaults(func=cmd_phone_test)
 
     args = parser.parse_args(argv)
     if getattr(args, "wait_seconds", 0) >= install.HOOK_TIMEOUT_SECONDS:

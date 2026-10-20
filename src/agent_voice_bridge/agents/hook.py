@@ -226,6 +226,26 @@ def _finish(outcome: Outcome) -> NoReturn:
     raise SystemExit(0)
 
 
+def _log(line: str) -> None:
+    """Append to hook.log next to hook.env. The agent may show only an exit code."""
+    try:
+        path = Path(os.environ.get("AVB_HOOK_LOG", default_data_dir() / "hook.log"))
+        if path.exists() and path.stat().st_size > 1_000_000:
+            path.replace(path.with_suffix(".log.1"))
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {line}\n")
+    except Exception:  # noqa: S110 - logging must never change the decision
+        pass
+
+
+def _stderr(text: str) -> None:
+    try:
+        sys.stderr.write(text)
+        sys.stderr.flush()
+    except Exception:  # noqa: S110 - e.g. a console encoding that can't show the text
+        pass
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="avb-hook", description=__doc__.split("\n\n")[0])
     parser.add_argument("--agent", choices=sorted(AGENTS), required=True)
@@ -235,13 +255,14 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--wait-seconds",
         type=int,
-        default=int(os.environ.get("AVB_WAIT_SECONDS", DEFAULT_WAIT_SECONDS)),
+        default=None,
         help="Give up after this long; must be shorter than the hook timeout configured in the agent",
     )
     args = parser.parse_args(argv)
 
     def failure(reason: str) -> NoReturn:
-        sys.stderr.write(f"avb-hook: {reason}\n")
+        _stderr(f"avb-hook: {reason}\n")
+        _log(f"{args.agent}: {reason}")
         if args.on_failure == "ask":
             _finish(Outcome(None))
         _finish(
@@ -251,24 +272,31 @@ def main(argv: list[str] | None = None) -> None:
             )
         )
 
+    # Every path ends in _finish (exit 0 with a decision): a crash would be exit 1,
+    # which agents report as a hook error instead of a clear denial.
     try:
-        raw = sys.stdin.buffer.read().decode("utf-8")
-        hook_input = json.loads(raw)
-        if not isinstance(hook_input, dict):
-            raise ValueError("hook input is not a JSON object")
-    except (ValueError, UnicodeDecodeError) as exc:
-        failure(f"invalid hook input: {exc}")
+        try:
+            raw = sys.stdin.buffer.read().decode("utf-8")
+            hook_input = json.loads(raw)
+            if not isinstance(hook_input, dict):
+                raise ValueError("hook input is not a JSON object")
+        except (ValueError, UnicodeDecodeError) as exc:
+            failure(f"invalid hook input: {exc}")
 
-    load_env_file(Path(os.environ.get("AVB_HOOK_ENV", default_data_dir() / "hook.env")))
-    token = os.environ.get("AVB_AGENT_TOKEN", "")
-    if not token:
-        failure("AVB_AGENT_TOKEN is not set")
-    try:
+        load_env_file(Path(os.environ.get("AVB_HOOK_ENV", default_data_dir() / "hook.env")))
+        token = os.environ.get("AVB_AGENT_TOKEN", "")
+        if not token:
+            failure("AVB_AGENT_TOKEN is not set")
+        wait = args.wait_seconds or int(os.environ.get("AVB_WAIT_SECONDS", DEFAULT_WAIT_SECONDS))
         client = BridgeClient(os.environ.get("AVB_BRIDGE_URL", DEFAULT_URL), token)
-        _finish(decide(hook_input, agent=args.agent, client=client, wait_seconds=args.wait_seconds))
+        outcome = decide(hook_input, agent=args.agent, client=client, wait_seconds=wait)
+        _log(f"{args.agent}: {hook_input.get('tool_name')} -> {outcome.behavior}")
+        _finish(outcome)
+    except SystemExit:
+        raise
     except BridgeError as exc:
         failure(str(exc))
-    except Exception as exc:  # never let an unexpected error become an implicit allow
+    except BaseException as exc:  # never let an unexpected error become an implicit allow
         failure(f"unexpected error: {type(exc).__name__}: {exc}")
 
 

@@ -66,12 +66,14 @@ async def run_hook(
     extra: list[str] | None = None,
     token: str = AGENT_TOKEN,
     tmp: Path,
+    hook_env: Path | None = None,
 ) -> asyncio.subprocess.Process:
     env = {
         **os.environ,
         "AVB_AGENT_TOKEN": token,
         "AVB_BRIDGE_URL": bridge_url,
-        "AVB_HOOK_ENV": str(tmp / "missing.env"),
+        "AVB_HOOK_ENV": str(hook_env or tmp / "missing.env"),
+        "AVB_HOOK_LOG": str(tmp / "hook.log"),
     }
     proc = await asyncio.create_subprocess_exec(
         sys.executable,
@@ -217,3 +219,12 @@ async def test_non_permission_event_is_denied_not_crashed(tmp_path: Path) -> Non
     proc = await run_hook("http://127.0.0.1:9", {"hook_event_name": "PreToolUse"}, tmp=tmp_path)
     out, err = await finish(proc)
     assert decision(out)["behavior"] == "deny" and "unsupported hook event" in err
+
+
+async def test_failure_is_a_clean_deny_and_is_logged(tmp_path: Path) -> None:
+    # Agents may show only the exit code, so the reason goes to hook.log too.
+    proc = await run_hook("http://127.0.0.1:9", claude_input("sess-bad", "ls"), tmp=tmp_path)
+    out, err = await finish(proc)  # exit code 0
+    assert decision(out)["behavior"] == "deny"
+    assert "bridge unreachable" in err
+    assert "claude-code: bridge unreachable" in (tmp_path / "hook.log").read_text()

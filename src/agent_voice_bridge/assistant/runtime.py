@@ -16,6 +16,7 @@ AVB_TTS                    ``piper`` (default when installed) or ``espeak``
 AVB_PIPER_VOICE            Piper voice name or .onnx path, default ``en_US-lessac-medium``
 AVB_MODEL_DIR              Where models are stored (default: the data directory)
 AVB_CALL_ON_TASK_DONE      ``1`` (default): call you when a phone task finishes
+AVB_INBOUND_CODE           ``1``: calls to the bridge also need your authenticator code
 =========================  ============================================================
 """
 
@@ -87,6 +88,10 @@ class AssistantRuntime:
             if call_on_task_done is not None
             else os.environ.get("AVB_CALL_ON_TASK_DONE", "1") == "1"
         )
+        # Calls *to* the bridge's Linphone account are only accepted from your account.
+        # AVB_INBOUND_CODE=1 also asks for your authenticator code (in case a SIP
+        # provider lets someone else call with your name as the caller).
+        self.inbound_code = os.environ.get("AVB_INBOUND_CODE", "0") == "1"
         self.hub = CallHub()
         self.reporter: ReportCaller | None = None
         self.worker.on_task_finished = self._task_finished
@@ -102,7 +107,7 @@ class AssistantRuntime:
                 tts=self.tts,
                 hub=self.hub,
                 worker=self.worker,
-                inbound_code=not call.caller_verified,
+                inbound_code=self.inbound_code and not call.caller_verified,
                 language=self.language,
             )
             await session.run()

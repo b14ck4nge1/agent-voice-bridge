@@ -10,7 +10,7 @@ answer is spoken back. Keys work too. Two things the brain can't do on its own:
 * **Start or continue a task on your PC.** Same: the code reads the instruction back
   and waits for your yes.
 
-Calls you place to the bridge's Linphone account need your authenticator code first.
+Calls to the bridge's Linphone account are accepted from your account only (AVB_INBOUND_CODE=1 adds a code).
 """
 
 from __future__ import annotations

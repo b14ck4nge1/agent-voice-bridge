@@ -81,3 +81,13 @@ async def test_finished_task_triggers_a_call() -> None:
     await asyncio.sleep(0)
     assert reporter.calls == ["Stripe refunds"]
     assert "POST /v1/refunds" in rt.hub.reasons[0]
+
+
+def test_inbound_code_is_off_by_default(monkeypatch: Any) -> None:
+    def make() -> AssistantRuntime:
+        return AssistantRuntime(stt=object(), tts=object(), brain_factory=lambda s, t: None)  # type: ignore[arg-type]
+
+    monkeypatch.delenv("AVB_INBOUND_CODE", raising=False)
+    assert make().inbound_code is False
+    monkeypatch.setenv("AVB_INBOUND_CODE", "1")
+    assert make().inbound_code is True

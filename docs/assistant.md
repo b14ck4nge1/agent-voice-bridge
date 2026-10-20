@@ -20,8 +20,10 @@ With the assistant on, the call is a conversation instead of a keypad menu:
 * Starting or continuing a task also needs your yes. The task itself runs with Claude
   Code's normal permissions, so anything that needs approval rings you (or, if you're
   already on the call, comes up in the conversation).
-* Calls **to** the bridge's Linphone account need your authenticator code first (anyone
-  could try to call it). In Bark mode your phone signs in with the SIP password.
+* Calls **to** the bridge's Linphone account are answered only when they come from your
+  own Linphone account; others are refused. This relies on sip.linphone.org showing the
+  real caller. For extra safety set `AVB_INBOUND_CODE=1` in `deploy/.env` to also ask for
+  your authenticator code. In Bark mode your phone signs in with the SIP password.
 
 ## Setup
 

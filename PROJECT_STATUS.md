@@ -17,7 +17,7 @@ Codex request.
 Claude Haiku 4.5 or an OpenAI model, Piper voice), approvals confirmed by the code itself,
 and tasks run on the PC by a new helper (`avb-worker`, `claude -p`), including calls when
 a task finishes and calls *to* the bridge. Tested with stand-ins only; not yet on a real
-call ([docs/assistant.md](docs/assistant.md)).
+call ([docs/assistant.md](docs/assistant.md)). User report 2026-10-20: the brain check (`avb-admin brain-test`) passed on the server with gpt-5.6-sol via the api-models.com gateway, tool call included.
 
 **Two phone modes** (choose with `deploy/linphone.sh`): *bark-sip* (above) and
 *linphone*, where the bridge signs in to sip.linphone.org with its own account and calls

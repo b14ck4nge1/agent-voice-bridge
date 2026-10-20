@@ -15,6 +15,7 @@ import shutil
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 from agent_voice_bridge.voice.audio import TELEPHONE_RATE, resample, wav_to_pcm16
 
@@ -110,3 +111,58 @@ def default_tts() -> SapiTTS | EspeakTTS:
     if sys.platform == "win32":
         return SapiTTS()
     return EspeakTTS()
+
+
+class PiperTTS:
+    """Natural-sounding local speech with Piper (free; voices from rhasspy/piper-voices).
+
+    ``voice`` is a voice name such as ``en_US-lessac-medium`` (looked up, and downloaded
+    if missing, in ``model_dir``) or a path to an ``.onnx`` voice file.
+    """
+
+    def __init__(self, voice: str = "en_US-lessac-medium", model_dir: str | None = None) -> None:
+        self.voice_name = voice
+        self.model_dir = Path(model_dir or os.environ.get("AVB_MODEL_DIR") or ".") / "piper"
+        self._voice: Any = None
+        self._lock = asyncio.Lock()
+
+    def _path(self) -> Path:
+        if self.voice_name.endswith(".onnx"):
+            return Path(self.voice_name)
+        return self.model_dir / f"{self.voice_name}.onnx"
+
+    def _load(self) -> Any:
+        from piper import PiperVoice
+
+        path = self._path()
+        if not path.is_file():
+            import subprocess
+
+            self.model_dir.mkdir(parents=True, exist_ok=True)
+            subprocess.run(  # noqa: S603 - fixed module, voice name from settings
+                [
+                    sys.executable,
+                    "-m",
+                    "piper.download_voices",
+                    self.voice_name,
+                    "--download-dir",
+                    str(self.model_dir),
+                ],
+                check=True,
+                timeout=600,
+            )
+        return PiperVoice.load(path)
+
+    def _run(self, text: str) -> tuple[bytes, int]:
+        chunks = list(self._voice.synthesize(text))
+        if not chunks:
+            return b"", TELEPHONE_RATE
+        rate = chunks[0].sample_rate
+        return b"".join(c.audio_int16_bytes for c in chunks), rate
+
+    async def synthesize(self, text: str) -> tuple[bytes, int]:
+        async with self._lock:
+            if self._voice is None:
+                self._voice = await asyncio.to_thread(self._load)
+            pcm, rate = await asyncio.to_thread(self._run, text[:MAX_CHARS])
+        return resample(pcm, rate), TELEPHONE_RATE

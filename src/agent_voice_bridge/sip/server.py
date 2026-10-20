@@ -116,6 +116,9 @@ class SipCall:
     _server: _Dialogs | None = None
     ended_callbacks: list[Callable[[], object]] = field(default_factory=list)
     route: list[str] = field(default_factory=list)  # Route headers for in-dialog requests
+    # False when anyone could have placed the call under your name (a call to the bridge's
+    # provider account): the assistant then asks for your authenticator code first.
+    caller_verified: bool = True
 
     async def hangup(self) -> None:
         if self.ended.is_set():

@@ -8,7 +8,7 @@ import pytest
 
 from agent_voice_bridge.sip.server import DialError, SipCall
 from agent_voice_bridge.sip.uac import AccountConfig, AccountError, SipAccountClient
-from tests.support.fake_provider import RECORD_ROUTE, FakeProvider
+from tests.support.fake_provider import RECORD_ROUTE, FakeProvider, call_bridge
 from tests.support.sip_client import goertzel, make_self_signed, tone
 
 
@@ -140,4 +140,47 @@ async def test_falls_back_to_avp_when_allowed(provider: FakeProvider) -> None:
     assert b"a=crypto:" in provider.invite.body  # still offers SRTP keys
     await asyncio.wait_for(rec.done.wait(), 3)
     assert rec.calls[0].rtp.srtp is not None
+    await client.stop()
+
+
+async def test_calls_to_the_bridge_from_your_account_only(provider: FakeProvider) -> None:
+    rec = Recorder()
+    rec.hang_up_after = 1.0
+    client = SipAccountClient(_config(provider, accept_calls_from="phone"), rec)
+    await client.start()
+
+    call_bridge(provider, "stranger")
+    await asyncio.sleep(0.3)
+    assert [s for s, _ in provider.responses if s != "100"] == ["403"]
+    assert rec.calls == []
+
+    call_bridge(provider, "phone")
+    for _ in range(50):
+        if rec.calls:
+            break
+        await asyncio.sleep(0.05)
+    assert rec.calls and rec.calls[0].caller_verified is False  # assistant asks for a code
+    ok = next(r for s, r in provider.responses if s == "200")
+    assert ok.header("record-route") == RECORD_ROUTE and b"a=crypto:" in ok.body
+    import base64
+    import re
+
+    from pylibsrtp import Policy, Session
+
+    m = re.search(rb"inline:([A-Za-z0-9+/=]+)", ok.body)
+    assert m is not None and provider.rtp is not None
+    provider.rtp.inbound = Session(
+        Policy(
+            key=base64.b64decode(m.group(1)),
+            ssrc_type=Policy.SSRC_ANY_INBOUND,
+            srtp_profile=Policy.SRTP_PROFILE_AES128_CM_SHA1_80,
+        )
+    )
+    await provider.press("7")
+    await asyncio.wait_for(rec.done.wait(), 5)
+    assert rec.digits == ["7"]
+    await asyncio.sleep(0.2)
+    bye = [r for r in provider.received if r.method == "BYE"][-1]
+    assert bye.uri == "sip:phone@10.9.8.7:5555;transport=tls"
+    assert bye.header("route") == RECORD_ROUTE
     await client.stop()

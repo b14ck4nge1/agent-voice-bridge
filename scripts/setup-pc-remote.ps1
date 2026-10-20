@@ -4,7 +4,8 @@
 param(
     [Parameter(Mandatory = $true)][string]$Url,
     [Parameter(Mandatory = $true)][string]$Token,
-    [switch]$NoHooks
+    [switch]$NoHooks,
+    [switch]$NoWorker
 )
 $ErrorActionPreference = "Stop"
 if (-not $Url.StartsWith("https://")) { throw "Url must start with https://" }
@@ -33,6 +34,16 @@ Write-Host "Server reachable: $($health.status) (version $($health.version))"
 
 if (-not $NoHooks) {
     & .\.venv\Scripts\avb-admin.exe install-hooks --claude --codex
+}
+
+# The PC helper runs phone tasks with Claude Code. Start it now and at every logon.
+if (-not $NoWorker) {
+    $startup = Join-Path ([Environment]::GetFolderPath("Startup")) "AgentVoiceBridge-Worker.cmd"
+    $worker = Join-Path $repo ".venv\Scripts\avb-worker.exe"
+    Set-Content -Path $startup -Encoding ASCII -Value "@start `"Agent Voice Bridge worker`" /min `"$worker`""
+    Get-Process avb-worker -ErrorAction SilentlyContinue | Stop-Process -Force
+    Start-Process -FilePath $worker -WindowStyle Minimized
+    Write-Host "PC helper started (and set to start at logon). Phone tasks run in $HOME\AgentVoiceBridge-Tasks"
 }
 Write-Host ""
 Write-Host "Done. Restart Claude Code (and approve the new hook once in Codex)."

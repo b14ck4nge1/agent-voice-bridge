@@ -8,7 +8,7 @@ import contextlib
 import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse
@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from agent_voice_bridge import __version__
 from agent_voice_bridge.approvals.service import ApprovalService, ServiceError
+from agent_voice_bridge.assistant.worker_hub import WorkerHub
 from agent_voice_bridge.config import Settings
 from agent_voice_bridge.database.store import Store
 from agent_voice_bridge.models import (
@@ -43,12 +44,24 @@ class CancelBody(BaseModel):
     reason: str | None = Field(default=None, max_length=500)
 
 
+class WorkerResult(BaseModel):
+    result: dict[str, Any]
+
+
+class WorkerEvent(BaseModel):
+    task_id: str = Field(max_length=200)
+    status: str = Field(max_length=50)
+    title: str | None = Field(default=None, max_length=500)
+    summary: str | None = Field(default=None, max_length=8000)
+
+
 def create_app(
     settings: Settings,
     *,
     dispatcher: CallDispatcher | None = None,
     store: Store | None = None,
     extension: Callable[[ApprovalService], AbstractAsyncContextManager[None]] | None = None,
+    worker_hub: WorkerHub | None = None,
 ) -> FastAPI:
     """``extension`` runs for the app's lifetime with the service, e.g. the SIP server."""
     settings.validate()
@@ -194,5 +207,25 @@ def create_app(
     )
     async def post_decision(request_id: str, body: DecisionSubmit) -> ApprovalView:
         return await service.decide(request_id, body)
+
+    # -- PC helper (avb-worker) endpoints: the agent token, like the hooks --------------
+
+    if worker_hub is not None:
+        hub = worker_hub
+
+        @app.post("/v1/worker/poll", tags=["worker"], dependencies=[agent_auth])
+        async def worker_poll(
+            wait: Annotated[float, Query(ge=0, le=MAX_WAIT_SECONDS)] = 25.0,
+        ) -> dict[str, Any]:
+            return {"jobs": await hub.poll(wait)}
+
+        @app.post("/v1/worker/jobs/{job_id}/result", tags=["worker"], dependencies=[agent_auth])
+        async def worker_result(job_id: str, body: WorkerResult) -> dict[str, bool]:
+            return {"accepted": hub.complete(job_id, body.result)}
+
+        @app.post("/v1/worker/events", tags=["worker"], dependencies=[agent_auth])
+        async def worker_event(body: WorkerEvent) -> dict[str, bool]:
+            hub.task_finished(body.model_dump())
+            return {"accepted": True}
 
     return app

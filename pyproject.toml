@@ -28,6 +28,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# The AI phone assistant (server side): speech recognition, speech, and the LLM brain.
+assistant = [
+    "faster-whisper>=1.1",
+    "piper-tts>=1.2",
+    "anthropic>=0.40",
+    "openai>=1.50",
+]
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.24",
@@ -41,6 +48,7 @@ avb-hook = "agent_voice_bridge.agents.hook:main"
 avb-codex = "agent_voice_bridge.agents.codex.cli:main"
 avb-admin = "agent_voice_bridge.admin:main"
 avb-voice-sim = "agent_voice_bridge.voice.simulator:main"
+avb-worker = "agent_voice_bridge.worker.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agent_voice_bridge"]
@@ -68,3 +76,7 @@ python_version = "3.11"
 strict = true
 mypy_path = "src"
 packages = ["agent_voice_bridge"]
+
+[[tool.mypy.overrides]]
+module = ["faster_whisper", "faster_whisper.*", "piper", "piper.*"]
+ignore_missing_imports = true

@@ -25,13 +25,15 @@ import asyncio
 import contextlib
 import logging
 import os
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
 from agent_voice_bridge.approvals.service import ApprovalService
+from agent_voice_bridge.assistant.runtime import AssistantRuntime
 from agent_voice_bridge.models import ApprovalState, ApprovalView
 from agent_voice_bridge.phone import make_tts
+from agent_voice_bridge.sip.adapter.base import CallDispatcher
 from agent_voice_bridge.sip.server import DialError, SipCall
 from agent_voice_bridge.sip.uac import AccountConfig, SipAccountClient
 from agent_voice_bridge.voice.phone_call import PhoneCallHandler
@@ -85,6 +87,7 @@ class LinphoneSettings:
                 media_ip=_get("AVB_SIP_MEDIA_IP"),
                 rtp_ports=(int(lo), int(hi or lo)),
                 require_srtp=(_get("AVB_LINPHONE_REQUIRE_SRTP", "1") == "1"),
+                accept_calls_from=target,
             ),
             target=target,
             ring_seconds=float(_get("AVB_LINPHONE_RING_SECONDS", "60") or 60),
@@ -118,8 +121,21 @@ class LinphoneDispatcher:
         self._loop: asyncio.Task[None] | None = None
         self._ringing = False
 
-    def attach(self, service: ApprovalService) -> None:
-        self.waiting = lambda: any(r.state == ApprovalState.PENDING_CALL for r in service.pending())
+    def attach(self, service: ApprovalService, *, also: Callable[[], bool] | None = None) -> None:
+        """``also``: another reason to keep calling (e.g. a task report to deliver)."""
+        extra = also or (lambda: False)
+        self.waiting = lambda: (
+            extra() or any(r.state == ApprovalState.PENDING_CALL for r in service.pending())
+        )
+
+    async def call_now(self, title: str) -> None:
+        """Call to report something (a finished task); the call picks up the reason."""
+        if self._loop is not None and not self._loop.done():
+            return
+        if not self.client.registered.is_set():
+            log.warning("can't call about %r: not signed in to Linphone", title)
+            return
+        self._loop = asyncio.get_running_loop().create_task(self._call_loop())
 
     async def request_call(self, request: ApprovalView) -> None:
         if self._loop is not None and not self._loop.done():
@@ -166,10 +182,17 @@ class LinphoneDispatcher:
 
 
 class LinphoneStack:
-    def __init__(self, settings: LinphoneSettings, *, tts: TextToSpeech | None = None) -> None:
+    def __init__(
+        self,
+        settings: LinphoneSettings,
+        *,
+        tts: TextToSpeech | None = None,
+        assistant: AssistantRuntime | None = None,
+    ) -> None:
         self.settings = settings
-        self.tts = tts or make_tts(settings)
-        self._handler: PhoneCallHandler | None = None
+        self.assistant = assistant
+        self.tts = tts or (assistant.tts if assistant else make_tts(settings))
+        self._handler: Callable[[SipCall], Awaitable[None]] | None = None
         self.client = SipAccountClient(settings.account, self._on_call)
         self.dispatcher = LinphoneDispatcher(
             self.client,
@@ -183,10 +206,20 @@ class LinphoneStack:
         assert self._handler is not None
         await self._handler(call)
 
+    @property
+    def call_dispatcher(self) -> CallDispatcher:
+        return self.assistant.wrap(self.dispatcher) if self.assistant else self.dispatcher
+
     @asynccontextmanager
     async def run(self, service: ApprovalService) -> AsyncIterator[None]:
-        self._handler = PhoneCallHandler(service, self.tts)
-        self.dispatcher.attach(service)
+        if self.assistant is not None:
+            self._handler = self.assistant.handler(service)
+            hub = self.assistant.hub
+            self.dispatcher.attach(service, also=lambda: bool(hub.reasons))
+            asyncio.get_running_loop().create_task(self.assistant.warm_up())
+        else:
+            self._handler = PhoneCallHandler(service, self.tts)
+            self.dispatcher.attach(service)
         await self.client.start()  # wrong password etc. stops start-up with a clear error
         log.info(
             "Phone path ready: calling %s via %s",

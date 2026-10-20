@@ -13,6 +13,12 @@ gave "wrong user/pass" (most likely a stale second Linphone account). Not yet
 tested: locked-phone ringing, cellular, repeated calls, and a real Claude Code or
 Codex request.
 
+**AI assistant (new, off by default):** a spoken conversation (Whisper large-v3-turbo,
+Claude Haiku 4.5 or an OpenAI model, Piper voice), approvals confirmed by the code itself,
+and tasks run on the PC by a new helper (`avb-worker`, `claude -p`), including calls when
+a task finishes and calls *to* the bridge. Tested with stand-ins only; not yet on a real
+call ([docs/assistant.md](docs/assistant.md)).
+
 **Two phone modes** (choose with `deploy/linphone.sh`): *bark-sip* (above) and
 *linphone*, where the bridge signs in to sip.linphone.org with its own account and calls
 yours, so Linphone's push rings the phone with no Bark. User report 2026-10-20: the

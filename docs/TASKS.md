@@ -41,7 +41,7 @@ that marked them done.
 | PB-03 | Call flow: TTS prompts, keypad decisions, barge-in, silence timeout | P0 | PB-02 | DONE | E2E with real hook process | `voice/phone_call.py`, `tests/end_to_end/test_phone_e2e.py` |
 | PB-04 | Windows setup script + phone-test command | P0 | PB-03 | TESTING | Script parses in CI; user run pending | `scripts/setup-phone.ps1`, `phone_test.py` |
 | HW-03 | Real iPhone test of the full path | P0 | PB-04 | BLOCKED (AWAITING USER) | Bark rings locked phone; tap → call → hear prompts → keys work | docs/phone-setup.md |
-| VO-07 | Speech recognition instead of keypad | P1 | HW-03 | READY | Spoken approve/reject works on the phone | – |
+| VO-07 | Speech recognition instead of keypad | P1 | HW-03 | IN REVIEW (Whisper + LLM assistant, stand-in tests; docs/assistant.md) | Spoken approve/reject works on the phone | – |
 
 ### Phase 1c: public server (ADR-0006)
 
@@ -108,3 +108,8 @@ that marked them done.
 | WIN-01 | GitHub Actions on Windows + Ubuntu | P1 | – | DONE | CI green on both | `.github/workflows/ci.yml`; Actions run 39391626629 green on windows/ubuntu × 3.11/3.13 |
 | WIN-02 | install/start/test scripts verified on a personal Windows PC | P1 | – | BLOCKED (AWAITING USER) | Scripts run cleanly | – |
 | REL-01 | License check of dependencies | P2 | – | BACKLOG | Table in docs | – |
+
+| AI-01 | AI assistant: Whisper STT, LLM brain (Claude/OpenAI) with tools, Piper TTS | P0 | VO-07 | IN REVIEW | Real call: natural conversation, approvals confirmed by code | docs/assistant.md |
+| AI-02 | PC helper (avb-worker): start/continue/report Claude Code tasks by phone | P0 | AI-01 | IN REVIEW | Task started by voice runs on the PC and is reported back | src/agent_voice_bridge/worker/cli.py |
+| AI-03 | Call when a phone task finishes; calls to the bridge (code-protected) | P1 | AI-02 | IN REVIEW | Real phone | – |
+| AI-04 | Codex tasks from the phone (`codex exec`) | P2 | AI-02 | BACKLOG | – | – |

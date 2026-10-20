@@ -81,6 +81,8 @@ TOTP="$(get AVB_TOTP_SECRET)"
 BARK_IV="$(rand 12)"
 
 umask 077
+# Settings added later (Linphone mode, the assistant, ...) survive a re-install.
+KEEP="$(grep -v -E '^(#|AVB_DOMAIN=|AVB_AGENT_TOKEN=|AVB_VOICE_TOKEN=|AVB_TOTP_SECRET=|AVB_BARK_DEVICE_KEY=|AVB_BARK_ENCRYPTION_KEY=|AVB_SIP_BIND=|AVB_SIP_PUBLIC_HOST=|AVB_SIP_MEDIA_IP=|AVB_SIP_PASSWORD=|AVB_SIP_TRANSPORT=|$)' "$ENV" 2>/dev/null || true)"
 cat > "$ENV" <<EOF
 # Agent Voice Bridge server settings (secrets). Keep private.
 AVB_DOMAIN=$DOMAIN
@@ -95,6 +97,7 @@ AVB_SIP_MEDIA_IP=${PUBLIC_IP}
 AVB_SIP_PASSWORD=$SIP_PASSWORD
 AVB_SIP_TRANSPORT=tls
 EOF
+if [[ -n "$KEEP" ]]; then printf '%s\n' "$KEEP" >> "$ENV"; fi
 
 echo "== Starting (first build takes a few minutes)"
 docker compose --env-file "$ENV" up -d --build

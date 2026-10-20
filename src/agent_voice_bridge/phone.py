@@ -7,17 +7,21 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from agent_voice_bridge.approvals.service import ApprovalService
 from agent_voice_bridge.models import ApprovalState
 from agent_voice_bridge.notify.bark import BarkNotifier
 from agent_voice_bridge.phone_config import PhoneSettings
 from agent_voice_bridge.sip.adapter.bark_wake import BarkWakeDispatcher
+from agent_voice_bridge.sip.adapter.base import CallDispatcher
 from agent_voice_bridge.sip.server import SipServer
 from agent_voice_bridge.voice.phone_call import PhoneCallHandler
 from agent_voice_bridge.voice.tts.base import TextToSpeech
 from agent_voice_bridge.voice.tts.engines import EspeakTTS, SapiTTS, default_tts
+
+if TYPE_CHECKING:
+    from agent_voice_bridge.assistant.runtime import AssistantRuntime
 
 log = logging.getLogger(__name__)
 
@@ -55,13 +59,19 @@ class PhoneStack:
         *,
         tts: TextToSpeech | None = None,
         notifier: BarkNotifier | None = None,
+        assistant: AssistantRuntime | None = None,
     ) -> None:
         self.settings = settings
-        self.tts = tts or make_tts(settings)
+        self.assistant = assistant
+        self.tts = tts or (assistant.tts if assistant else make_tts(settings))
         self.dispatcher = BarkWakeDispatcher(
             notifier or BarkNotifier(settings.bark), settings.dial_url
         )
         self.sip: SipServer | None = None
+
+    @property
+    def call_dispatcher(self) -> CallDispatcher:
+        return self.assistant.wrap(self.dispatcher) if self.assistant else self.dispatcher
 
     @asynccontextmanager
     async def run(self, service: ApprovalService) -> AsyncIterator[None]:
@@ -71,7 +81,12 @@ class PhoneStack:
 
         self.dispatcher.attach(state_of)
         await _wait_for_files(self.settings.sip.tls_cert, self.settings.sip.tls_key)
-        self.sip = SipServer(self.settings.sip, PhoneCallHandler(service, self.tts))
+        if self.assistant is not None:
+            handler = self.assistant.handler(service)
+            asyncio.get_running_loop().create_task(self.assistant.warm_up())
+        else:
+            handler = PhoneCallHandler(service, self.tts)
+        self.sip = SipServer(self.settings.sip, handler)
         await self.sip.start()
         log.info("Phone path ready: Bark taps dial %s", self.settings.dial_url)
         try:

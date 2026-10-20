@@ -45,7 +45,7 @@ def _parse(raw: bytes) -> tuple[str, Received | None]:
         headers.setdefault(k.strip().lower(), []).append(v.strip())
     first = lines[0].split()
     if first[0] == "SIP/2.0":
-        return first[1], None
+        return first[1], Received("RESPONSE", first[1], headers, body)
     return first[0], Received(first[0], first[1], headers, body)
 
 
@@ -70,6 +70,7 @@ class FakeProvider:
     registered: asyncio.Event = field(default_factory=asyncio.Event)
     answered: asyncio.Event = field(default_factory=asyncio.Event)
     _seq: int = 0
+    responses: list[tuple[str, Received]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.auth = DigestAuthenticator("localhost", self.username, self.password)
@@ -141,7 +142,12 @@ class FakeProvider:
     def _incoming(self, raw: bytes) -> None:
         kind, req = _parse(raw)
         if req is None:
-            return  # responses (to our BYE)
+            return
+        if req.method == "RESPONSE":  # to our INVITE (call_bridge) or BYE
+            self.responses.append((kind, req))
+            if kind == "200" and "INVITE" in (req.header("cseq") or ""):
+                self._ack_bridge(req)
+            return
         self.received.append(req)
         if req.method == "REGISTER":
             ok, _ = self.auth.verify(req.header("authorization"), "REGISTER")
@@ -241,6 +247,22 @@ class FakeProvider:
         )
         self.answered.set()
 
+    def _ack_bridge(self, ok: Received) -> None:
+        text = ok.body.decode()
+        ip = re.search(r"c=IN IP4 (\S+)", text).group(1)  # type: ignore[union-attr]
+        port = int(re.search(r"m=audio (\d+)", text).group(1))  # type: ignore[union-attr]
+        self.remote_media = (ip, port)
+        lines = [
+            "ACK sip:bot@127.0.0.1;transport=tls SIP/2.0",
+            f"Via: SIP/2.0/TLS 127.0.0.1:{self.port};branch=z9hG4bK{secrets.token_hex(6)}",
+            f"From: {ok.header('from')}",
+            f"To: {ok.header('to')}",
+            f"Call-ID: {ok.header('call-id')}",
+            "CSeq: 1 ACK",
+            "Content-Length: 0",
+        ]
+        self._send(("\r\n".join(lines) + "\r\n\r\n").encode())
+
     def _protect(self, packet: bytes) -> bytes:
         return bytes(self.outbound.protect(packet)) if self.outbound is not None else packet  # type: ignore[attr-defined]
 
@@ -284,3 +306,45 @@ class FakeProvider:
             "Content-Length: 0",
         ]
         self._send(("\r\n".join(lines) + "\r\n\r\n").encode())
+
+
+def call_bridge(provider: FakeProvider, from_user: str) -> str:
+    """The phone calls the bridge's account: send an INVITE (with SRTP) down the connection."""
+    from pylibsrtp import Policy, Session
+
+    key = os.urandom(30)
+    provider.call_key = key  # type: ignore[attr-defined]
+    prof = Policy.SRTP_PROFILE_AES128_CM_SHA1_80
+    provider.outbound = Session(
+        Policy(key=key, ssrc_type=Policy.SSRC_ANY_OUTBOUND, srtp_profile=prof)
+    )
+    sdp = "\r\n".join(
+        [
+            "v=0",
+            "o=phone 5 5 IN IP4 127.0.0.1",
+            "s=-",
+            "c=IN IP4 127.0.0.1",
+            "t=0 0",
+            f"m=audio {provider.rtp_port} RTP/SAVP 0 101",
+            "a=rtpmap:101 telephone-event/8000",
+            f"a=crypto:1 AES_CM_128_HMAC_SHA1_80 inline:{base64.b64encode(key).decode()}",
+            "a=sendrecv",
+            "",
+        ]
+    ).encode()
+    call_id = f"in-{secrets.token_hex(4)}"
+    lines = [
+        "INVITE sip:bot@127.0.0.1;transport=tls SIP/2.0",
+        f"Via: SIP/2.0/TLS 127.0.0.1:{provider.port};branch=z9hG4bK{secrets.token_hex(6)}",
+        f"Record-Route: {RECORD_ROUTE}",
+        f"From: <sip:{from_user}@localhost>;tag=ph1",
+        "To: <sip:bot@localhost>",
+        f"Call-ID: {call_id}",
+        "CSeq: 1 INVITE",
+        "Contact: <sip:phone@10.9.8.7:5555;transport=tls>",
+        "Content-Type: application/sdp",
+        f"Content-Length: {len(sdp)}",
+    ]
+    provider.responses.clear()
+    provider._send(("\r\n".join(lines) + "\r\n\r\n").encode() + sdp)
+    return call_id

@@ -37,6 +37,7 @@ from agent_voice_bridge.sip.message import (
 from agent_voice_bridge.sip.rtp import RtpSession
 from agent_voice_bridge.sip.server import ALLOW, USER_AGENT, DialError, SipCall, _Peer
 from agent_voice_bridge.sip.srtp import SrtpError, from_answer, make_offer
+from agent_voice_bridge.sip.srtp import negotiate as srtp_negotiate
 
 log = logging.getLogger(__name__)
 
@@ -62,6 +63,8 @@ class AccountConfig:
     require_srtp: bool = True
     register_expires: int = 600
     ca_file: str | None = None  # tests: trust this CA instead of the system store
+    # Answer calls from this account (your phone), e.g. "alice"; others get 403.
+    accept_calls_from: str | None = None
 
     @property
     def aor(self) -> str:
@@ -173,6 +176,7 @@ class SipAccountClient:
         self._reg_tag = secrets.token_hex(6)
         self._reg_cseq = 0
         self._stopping = False
+        self._acks: dict[str, asyncio.Event] = {}
 
     # -- lifecycle ---------------------------------------------------------------------
 
@@ -418,6 +422,9 @@ class SipAccountClient:
         method = msg.method or ""
         call = self.calls.get(msg.call_id)
         if method == "ACK":
+            acked = self._acks.get(msg.call_id)
+            if acked is not None:
+                acked.set()
             return
         if method == "BYE":
             if call is None:
@@ -435,7 +442,7 @@ class SipAccountClient:
             resp.body = call.answer_sdp
             peer.send(resp.to_bytes())
         elif method == "INVITE":
-            self._reply(msg, 486, "Busy Here")  # nobody calls the bridge
+            self._incoming(msg, peer)
         elif method in ("OPTIONS", "NOTIFY", "UPDATE", "INFO"):
             self._reply(msg, 200, "OK")
         elif method == "CANCEL":
@@ -448,6 +455,109 @@ class SipAccountClient:
         resp.add("Server", USER_AGENT)
         with contextlib.suppress(ConnectionError):
             self._send(resp)
+
+    # -- calls to the bridge ---------------------------------------------------------------
+
+    def _incoming(self, msg: SipMessage, peer: _Peer) -> None:
+        allowed = self.config.accept_calls_from
+        caller = uri_of(msg.get("From") or "")
+        if not allowed or caller.split(";")[0] != self.config.target_uri(allowed).split(";")[0]:
+            log.warning("SIP account: refusing a call from %s", caller or "?")
+            self._reply(msg, 403, "Forbidden")
+            return
+        if self.calls:
+            self._reply(msg, 486, "Busy Here")
+            return
+        task = asyncio.get_running_loop().create_task(self._answer_incoming(msg, peer))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    async def _answer_incoming(self, msg: SipMessage, peer: _Peer) -> None:
+        trying = response_for(msg, 100, "Trying")
+        peer.send(trying.to_bytes())
+        try:
+            offer = sdp.parse_offer(msg.body)
+        except sdp.SdpError:
+            self._reply(msg, 488, "Not Acceptable Here")
+            return
+        codec = sdp.choose_codec(offer)
+        srtp = None
+        if offer.crypto:
+            with contextlib.suppress(SrtpError):
+                srtp = srtp_negotiate(offer.crypto)
+        if codec is None or (
+            srtp is None and (self.config.require_srtp or "SAVP" in offer.profile)
+        ):
+            self._reply(msg, 488, "Not Acceptable Here")
+            return
+        call: SipCall | None = None
+
+        def on_dtmf(digit: str) -> None:
+            if call is not None:
+                call.dtmf.put_nowait(digit)
+
+        rtp, rtp_port = await RtpSession.open(
+            self.config.bind_host,
+            self.config.rtp_ports,
+            codec=codec,
+            remote=(offer.address, offer.port),
+            telephone_event=offer.telephone_event,
+            on_dtmf=on_dtmf,
+            allow_any_host=True,
+            srtp=srtp[0] if srtp else None,
+        )
+        local_tag = secrets.token_hex(6)
+        answer = sdp.build_answer(
+            address=self.config.media_ip or peer.local_ip,
+            port=rtp_port,
+            codec=codec,
+            telephone_event=offer.telephone_event,
+            profile=offer.profile if srtp else "RTP/AVP",
+            crypto=srtp[1] if srtp else None,
+        )
+        ok = response_for(msg, 200, "OK", to_tag=local_tag)
+        for rr in msg.get_all("Record-Route"):
+            ok.add("Record-Route", rr)
+        ok.add("Contact", self._contact())
+        ok.add("Allow", ALLOW)
+        ok.add("Content-Type", "application/sdp")
+        ok.body = answer
+        call = SipCall(
+            call_id=msg.call_id,
+            caller=uri_of(msg.get("From") or ""),
+            peer=peer,
+            rtp=rtp,
+            local_tag=local_tag,
+            remote_from=msg.get("From") or "",
+            local_to=f"{msg.get('To')};tag={local_tag}",
+            remote_contact=uri_of(msg.get("Contact") or msg.get("From") or ""),
+            rtp_port=rtp_port,
+            answer_sdp=answer,
+            _server=self,
+            caller_verified=False,
+        )
+        call.route = split_header_list(msg.get_all("Record-Route"))  # UAS: in order
+        self.calls[msg.call_id] = call
+        raw = ok.to_bytes()
+        peer.send(raw)
+        log.info("SIP account: answered a call from %s", call.caller)
+        acked = asyncio.Event()
+        self._acks[msg.call_id] = acked
+
+        async def retransmit() -> None:  # until the ACK arrives (RFC 3261 13.3.1.4)
+            for delay in (0.5, 1, 2, 4, 4, 4, 4):
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(acked.wait(), delay)
+                if acked.is_set() or call.ended.is_set():
+                    break
+                with contextlib.suppress(Exception):
+                    peer.send(raw)
+            self._acks.pop(msg.call_id, None)
+
+        resend = asyncio.get_running_loop().create_task(retransmit())
+        self._tasks.add(resend)
+        resend.add_done_callback(self._tasks.discard)
+        self._start_call(call)
 
     # -- calls ----------------------------------------------------------------------------
 

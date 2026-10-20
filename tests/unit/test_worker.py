@@ -68,8 +68,16 @@ def worker(tmp_path: Path) -> Worker:
 
 
 def _wait_done(w: Worker, task_id: str) -> None:
-    for _ in range(200):
-        if w.store.tasks[task_id].status != "running":
+    """Until the task has ended and its end was reported (which happens just after)."""
+    for _ in range(250):
+        reported = [
+            e
+            for e in w.events  # type: ignore[attr-defined]
+            if e["path"] == "/v1/worker/events" and e["task_id"] == task_id
+        ]
+        if w.store.tasks[task_id].status != "running" and len(reported) == len(
+            w.store.tasks[task_id].turns
+        ):
             return
         time.sleep(0.02)
     raise AssertionError("task did not finish")

@@ -80,7 +80,13 @@ open or was just in use. That is why approvals use Bark to wake the phone.
 ## Maintenance
 
 ```bash
-cd /opt/agent-voice-bridge/deploy
-sudo docker compose logs -f bridge      # watch calls
-sudo bash ../deploy/install.sh voice.yourdomain.com KEY   # update (keeps secrets)
+cd ~/agent-voice-bridge/deploy
+sudo docker compose logs -f bridge          # watch calls live (Ctrl+C to stop)
 ```
+
+**Automatic updates:** `sudo bash ~/agent-voice-bridge/deploy/auto-update.sh enable` checks
+the branch every 10 minutes. On a new commit it pulls, rebuilds, restarts and checks
+`/healthz`; if the new version isn't healthy it goes back to the previous one (and doesn't
+retry that commit). A call in progress during an update is dropped. `auto-update.sh status`
+shows the log, `now` checks immediately, `disable` turns it off. Anyone who can push to the
+branch can change what runs on the server, so keep push access to yourself.

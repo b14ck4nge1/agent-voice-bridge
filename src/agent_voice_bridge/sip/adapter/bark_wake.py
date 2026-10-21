@@ -104,10 +104,10 @@ class BarkWakeDispatcher:
         self._reminders.pop(request.id, None)
 
     async def call_now(self, title: str) -> None:
-        """Ask you to call (tap) to hear a report, e.g. a finished task."""
+        """Ask you to call (tap) to hear something: a finished task, a reminder."""
         try:
             await self.notifier.send(
-                "Task finished", f"{title[:80]} · Tap to hear the report.", self.url
+                "Agent Voice Bridge", f"{title[:80]} · Tap to hear it.", self.url
             )
         except BarkError as exc:
             log.warning("Bark report notification failed: %s", exc)

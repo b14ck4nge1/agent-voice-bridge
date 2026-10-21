@@ -340,3 +340,49 @@ async def test_request_arriving_during_call_joins_it(service: ApprovalService) -
     assert service.get(rid).state == ApprovalState.IN_CALL
     await h.hang_up()
     assert service.get(rid).state == ApprovalState.PENDING_CALL
+
+
+async def test_personal_assistant_schedules_a_call(service: ApprovalService, tmp_path: Any) -> None:
+    from zoneinfo import ZoneInfo
+
+    from agent_voice_bridge.assistant.personal import PersonalStore
+
+    store = PersonalStore(tmp_path / "p.json", zone=ZoneInfo("Europe/London"))
+    store.remember("The user's name is Sam")
+    prompts: list[str] = []
+    steps = [
+        say("Hi Sam!"),
+        tool(
+            "schedule_call",
+            {"in_minutes": 10, "message": "check the oven"},
+            "Sure, I'll call you in 10 minutes.",
+        ),
+    ]
+
+    def factory(system: str, tools: list[Tool]) -> ScriptedBrain:
+        prompts.append(system)
+        return ScriptedBrain(tools, steps)
+
+    call = FakeCall()
+    session = AssistantSession(
+        call,  # type: ignore[arg-type]
+        service=service,
+        brain_factory=factory,  # type: ignore[arg-type]
+        stt=FakeSTT(),
+        tts=FakeTTS(),  # type: ignore[arg-type]
+        hub=CallHub(),
+        personal=store,
+        idle_seconds=5,
+    )
+    assert "name is Sam" in prompts[0] and "Europe/London" in prompts[0]
+    assert "friendly" in prompts[0]
+    session.stt.lines.append("call me in ten minutes about the oven")  # type: ignore[attr-defined]
+    task = asyncio.get_running_loop().create_task(session.run())
+    for _ in range(20):
+        await asyncio.sleep(0.01)
+    session.events.put_nowait(("speech", b"\x01\x00" * 1600))
+    for _ in range(40):
+        await asyncio.sleep(0.01)
+    assert [r["text"] for r in store.reminders] == ["check the oven"]
+    call.ended.set()
+    await asyncio.wait_for(task, 5)

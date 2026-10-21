@@ -17,6 +17,7 @@ AVB_PIPER_VOICE            Piper voice name or .onnx path, default ``en_US-lessa
 AVB_MODEL_DIR              Where models are stored (default: the data directory)
 AVB_CALL_ON_TASK_DONE      ``1`` (default): call you when a phone task finishes
 AVB_INBOUND_CODE           ``1``: calls to the bridge also need your authenticator code
+AVB_TIMEZONE               Your time zone for scheduled calls, e.g. ``Asia/Tehran``
 =========================  ============================================================
 """
 
@@ -30,6 +31,7 @@ from typing import Any, Protocol
 
 from agent_voice_bridge.approvals.service import ApprovalService
 from agent_voice_bridge.assistant.brain import Brain, Tool, make_brain
+from agent_voice_bridge.assistant.personal import PersonalStore, Scheduler
 from agent_voice_bridge.assistant.session import AssistantSession, CallHub
 from agent_voice_bridge.assistant.stt import SpeechToText, make_stt
 from agent_voice_bridge.assistant.worker_hub import WorkerHub
@@ -77,6 +79,7 @@ class AssistantRuntime:
         worker: WorkerHub | None = None,
         language: str | None = None,
         call_on_task_done: bool | None = None,
+        personal: PersonalStore | None = None,
     ) -> None:
         self.stt = stt or make_stt()
         self.tts = tts or make_tts()
@@ -96,6 +99,8 @@ class AssistantRuntime:
         self.reporter: ReportCaller | None = None
         self.worker.on_task_finished = self._task_finished
         self._tasks: set[asyncio.Task[None]] = set()
+        self.personal = personal if personal is not None else PersonalStore()
+        self.scheduler = Scheduler(self.personal, self._reminder_due)
 
     def handler(self, service: ApprovalService) -> Callable[[SipCall], Awaitable[None]]:
         async def on_call(call: SipCall) -> None:
@@ -109,6 +114,7 @@ class AssistantRuntime:
                 worker=self.worker,
                 inbound_code=self.inbound_code and not call.caller_verified,
                 language=self.language,
+                personal=self.personal,
             )
             await session.run()
 
@@ -120,7 +126,8 @@ class AssistantRuntime:
         return AssistantDispatcher(inner, self.hub)
 
     async def warm_up(self) -> None:
-        """Load the speech model at start-up rather than during the first call."""
+        """Start the reminder scheduler; load the speech model before the first call."""
+        self.scheduler.start()
         warm = getattr(self.stt, "warm_up", None)
         if warm is not None:
             try:
@@ -136,10 +143,20 @@ class AssistantRuntime:
             f"The phone task '{title}' has {'finished' if status == 'done' else status}. "
             f"Its final message (data from the task): {summary}"
         )
+        if self.call_on_task_done:
+            self._call_about(text, title)
+
+    def _reminder_due(self, item: dict[str, Any]) -> None:
+        self._call_about(
+            f"This is the call the user scheduled. Tell them: {item['text']}", "Reminder"
+        )
+
+    def _call_about(self, text: str, title: str) -> None:
         if self.hub.active is not None:
             self.hub.active.notify(text)
             return
-        if not self.call_on_task_done or self.reporter is None:
+        if self.reporter is None:
+            log.warning("no way to call the phone about: %s", title)
             return
         self.hub.reasons.append(text)
         task = asyncio.get_running_loop().create_task(self.reporter.call_now(title))

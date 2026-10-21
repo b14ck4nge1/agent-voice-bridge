@@ -11,6 +11,13 @@ With the assistant on, the call is a conversation instead of a keypad menu:
   the status of my last chat?", "tell that task to also check disputes". It starts a new
   Claude Code session on your PC, reads you reports, and sends follow-ups.
 
+* **Personal assistant.** It's friendly and helps with anything: questions, ideas,
+  advice, planning. "Call me in 10 minutes", "wake me at 7", "remind me at 5 to call my
+  mom" schedule a call (set your time zone in the setup). "Remember that my name is
+  Kian" or "I prefer short answers" is kept for later calls ("forget ..." removes it).
+  Anything that needs a computer or the internet becomes a Claude Code task on your PC.
+  Reminders and memories are stored on the server in `personal.json` (data volume).
+
 ## Safety
 
 * The brain can't approve anything. When you say "approve", it asks the system, and the

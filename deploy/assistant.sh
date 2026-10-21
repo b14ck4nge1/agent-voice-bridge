@@ -98,6 +98,9 @@ case "${1:-}" in
       set_var AVB_STT api; set_var AVB_STT_MODEL "$S"; set_var AVB_STT_BASE_URL "$SU"
       set_var AVB_STT_API_KEY "$(ask_secret AVB_STT_API_KEY "Its API key" "$K")"
     fi
+    TZ_DEFAULT="$(timedatectl show -p Timezone --value 2>/dev/null || echo UTC)"
+    Z=$(ask AVB_TIMEZONE "Your time zone, for scheduled calls (e.g. Asia/Tehran)" "$TZ_DEFAULT")
+    set_var AVB_TIMEZONE "$Z"
     L=$(ask AVB_STT_LANGUAGE "Language you'll speak, e.g. en or fa (- = detect)" "")
     [[ "$L" == "-" ]] && L=""
     set_var AVB_STT_LANGUAGE "$L"

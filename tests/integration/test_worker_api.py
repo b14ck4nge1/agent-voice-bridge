@@ -91,3 +91,19 @@ def test_inbound_code_is_off_by_default(monkeypatch: Any) -> None:
     assert make().inbound_code is False
     monkeypatch.setenv("AVB_INBOUND_CODE", "1")
     assert make().inbound_code is True
+
+
+async def test_due_reminder_calls_the_phone(tmp_path: Any) -> None:
+    from agent_voice_bridge.assistant.personal import PersonalStore
+
+    rt = AssistantRuntime(
+        stt=object(),  # type: ignore[arg-type]
+        tts=object(),  # type: ignore[arg-type]
+        brain_factory=lambda s, t: None,  # type: ignore[arg-type,return-value]
+        personal=PersonalStore(tmp_path / "p.json"),
+    )
+    reporter = Reporter()
+    rt.reporter = reporter
+    rt._reminder_due({"text": "drink water"})
+    await asyncio.sleep(0)
+    assert reporter.calls == ["Reminder"] and "drink water" in rt.hub.reasons[0]

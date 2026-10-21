@@ -25,6 +25,7 @@ dependencies = [
     "httpx>=0.27",
     "cryptography>=42",
     "pylibsrtp>=0.10",
+    "tzdata>=2024.1",  # time zones for scheduled calls (Windows and slim images have none)
 ]
 
 [project.optional-dependencies]

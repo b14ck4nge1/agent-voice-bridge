@@ -1,0 +1,92 @@
+# Server setup (Bark + Linphone only, works anywhere)
+
+Your Ubuntu server runs the bridge. The iPhone needs only **Bark** and **Linphone**;
+the PC's hooks talk to the server over HTTPS. Calls use SIP over TLS (Let's Encrypt
+certificate) and SRTP-encrypted audio. See [ADR-0006](adr/0006-public-server.md).
+
+## 1. Point your domain at the server (Cloudflare, free)
+
+1. Create a free Cloudflare account and **Add a domain**. Cloudflare shows two
+   nameservers; set them at the company where you bought the domain (usually under
+   "Nameservers" or "DNS"). It takes from a few minutes to a few hours.
+2. In Cloudflare: **DNS → Records → Add record**:
+   * Type **A**, Name **voice**, IPv4 = your server's public IP
+   * Proxy status: **DNS only** (grey cloud). Calls can't go through Cloudflare's proxy.
+3. Check from any PC: `nslookup voice.yourdomain.com` should print the server IP.
+
+If your provider has a firewall in its web panel, also allow: TCP 22, 80, 443,
+5061 and UDP 40000-40200.
+
+## 2. Install on the server (Ubuntu 24.04 / 26.04)
+
+```bash
+git clone --branch claude/phase0-bridge-mvp https://github.com/b14ck4nge1/agent-voice-bridge.git
+sudo bash agent-voice-bridge/deploy/install.sh voice.yourdomain.com YOUR_BARK_DEVICE_KEY
+```
+
+If the repository is private, `git clone` asks for a username and password. Use your
+GitHub username and a **read-only token** as the password: GitHub → Settings →
+Developer settings → Fine-grained tokens → Generate, repository access *only this
+repository*, permission *Contents: Read-only*.
+
+On AWS EC2 (and similar), also open the same ports in the instance's **Security
+Group** inbound rules: TCP 22, 80, 443, 5061 and UDP 40000-40200.
+
+The Bark device key is in the Bark app: the part after `https://api.day.app/` in its
+example URL. The script installs Docker, opens the firewall (keeping SSH open),
+generates every secret, starts the service, and prints **SETUP-DETAILS.txt**
+(`/opt/agent-voice-bridge/deploy/SETUP-DETAILS.txt`) with what to enter on the
+iPhone and the PC.
+
+## 3. iPhone
+
+Follow SETUP-DETAILS.txt:
+* **Bark**: nothing to configure by default (no encryption, so it works alongside
+  other services that use Bark). For encrypted notifications, install with
+  `sudo AVB_BARK_ENCRYPT=1 bash .../install.sh ...` and enter the key it prints.
+* **Linphone**: third-party SIP account `phone`, domain `voice.yourdomain.com` (no port),
+  transport **TLS**, media encryption **SRTP**.
+* Optional: the `otpauth://` line in an authenticator app, for high-risk approvals.
+
+## 4. Windows PC
+
+Run the two PowerShell lines printed in SETUP-DETAILS.txt (clone, then
+`setup-pc-remote.ps1 -Url https://voice.yourdomain.com -Token ...`). Restart Claude
+Code; approve the new hook once in Codex.
+
+## 5. Test
+
+On the PC: `.\.venv\Scripts\avb-admin test-approval`. Bark rings the iPhone; tap it;
+Linphone calls the server; you hear the request; press **1**, then **1** to approve.
+The PC prints `Decision: allow`.
+
+### Direct call test (no Bark)
+
+The server can also ring Linphone itself. It stops the bridge for a moment, because
+only one program can use port 5061:
+
+```bash
+cd ~/agent-voice-bridge/deploy
+sudo docker compose stop bridge
+sudo docker compose run --rm bridge avb-admin phone-test --direct
+sudo docker compose start bridge
+```
+
+Open Linphone and keep it open. Once it signs in, the server calls it; answer, listen,
+press keys (they are read back), and press **#** to finish. Without push, iOS suspends
+Linphone soon after it leaves the screen, so a direct call only rings while Linphone is
+open or was just in use. That is why approvals use Bark to wake the phone.
+
+## Maintenance
+
+```bash
+cd ~/agent-voice-bridge/deploy
+sudo docker compose logs -f bridge          # watch calls live (Ctrl+C to stop)
+```
+
+**Automatic updates:** `sudo bash ~/agent-voice-bridge/deploy/auto-update.sh enable` checks
+the branch every 10 minutes. On a new commit it pulls, rebuilds, restarts and checks
+`/healthz`; if the new version isn't healthy it goes back to the previous one (and doesn't
+retry that commit). A call in progress during an update is dropped. `auto-update.sh status`
+shows the log, `now` checks immediately, `disable` turns it off. Anyone who can push to the
+branch can change what runs on the server, so keep push access to yourself.

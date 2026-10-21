@@ -1,0 +1,16 @@
+# HTTPS for the bridge API, with an automatic Let's Encrypt certificate that the
+# SIP server reuses for TLS. Only the endpoints the PC's hooks and helper need are exposed;
+# the voice endpoints stay on localhost.
+{
+	acme_ca https://acme-v02.api.letsencrypt.org/directory
+}
+
+{$AVB_DOMAIN} {
+	@agent path /healthz /v1/approvals /v1/approvals/* /v1/worker/*
+	handle @agent {
+		reverse_proxy 127.0.0.1:8765
+	}
+	handle {
+		respond 404
+	}
+}

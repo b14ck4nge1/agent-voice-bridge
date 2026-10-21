@@ -105,6 +105,32 @@ class _Confirm:
     tries: int = 0
 
 
+_FILLERS = {
+    "um",
+    "umm",
+    "ummm",
+    "uh",
+    "uhh",
+    "uhm",
+    "hmm",
+    "hm",
+    "mm",
+    "mmm",
+    "er",
+    "erm",
+    "ah",
+    "eh",
+    "oh",
+    "uh-huh",
+    "mhm",
+}
+
+
+def _only_filler(text: str) -> bool:
+    words = [w.strip(".,!?…-'\"").lower() for w in text.split()]
+    return all(w in _FILLERS or not w for w in words)
+
+
 class CallHub:
     """Where the dispatcher finds the call in progress, to hand it new requests."""
 
@@ -132,6 +158,7 @@ class AssistantSession:
         language: str = "English",
         idle_seconds: float = IDLE_SECONDS,
         personal: PersonalStore | None = None,
+        remember_calls: bool = True,
     ) -> None:
         self.call = call
         self.service = service
@@ -150,15 +177,22 @@ class AssistantSession:
         self._pending_notes: list[str] = []  # updates that arrived during a confirmation
         self._code_digits = ""
         self._code_tries = 0
+        self._audio = b""  # your current sentence so far
+        self._turn: asyncio.Task[None] | None = None
+        self._turn_cancellable = True
+        self._heard: list[str] = []
+        self._said: list[str] = []
         self.events: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
         self.personal = personal
+        self.remember_calls = remember_calls
         context = personal.context() if personal else ""
         self.brain = brain_factory(
-            SYSTEM_PROMPT.format(language=language, context=context), self._tools()
+            SYSTEM_PROMPT.format(language=language, context=context),
+            [self._committing(t) for t in self._tools()],
         )
         self.vad = Endpointer(
             lambda pcm: self.events.put_nowait(("speech", pcm)),
-            on_speech_start=self._barge_in,
+            on_speech_start=self._speech_started,
             boost=lambda: 2.5 if self.call.rtp.playing else 1.0,
         )
 
@@ -176,7 +210,7 @@ class AssistantSession:
                 try:
                     kind, value = await asyncio.wait_for(self.events.get(), self.idle_seconds)
                 except TimeoutError:
-                    if self.call.rtp.playing:
+                    if self.call.rtp.playing or self._turn_running():
                         continue
                     quiet += 1
                     if quiet >= 2:
@@ -187,12 +221,24 @@ class AssistantSession:
                 quiet = 0
                 if kind == "end":
                     break
+                if kind == "speech_start":  # you're still talking: wait for the rest
+                    self._hold_turn()
+                    continue
+                if kind == "speech":
+                    self._audio += value
+                    self._start_turn()
+                    continue
+                await self._finish_turn()
                 await self._handle(kind, value)
+            await self._finish_turn()
         finally:
             self.hub.active = None
             dtmf.cancel()
             ended.cancel()
+            if self._turn is not None and not self._turn.done():
+                self._turn.cancel()
             await self._release()
+            await self._summarize()
             with contextlib.suppress(Exception):
                 if not self.call.ended.is_set():
                     await asyncio.wait_for(self.call.rtp.wait_played(), 15)
@@ -228,6 +274,44 @@ class AssistantSession:
             parts.append("Greet the user briefly and tell them.")
         await self._think(" ".join(parts) + "]")
 
+    # -- one spoken turn, which you can keep adding to -----------------------------------
+    #
+    # A pause ("umm...") can end an utterance early. If you start talking again before
+    # the reply has begun (or any tool ran), the half-finished turn is cancelled and the
+    # new audio is joined to the earlier audio, so the sentence is understood as a whole.
+
+    def _turn_running(self) -> bool:
+        return self._turn is not None and not self._turn.done()
+
+    def _commit(self) -> None:
+        """From here on the turn has effects: it finishes even if you keep talking."""
+        self._turn_cancellable = False
+        self._audio = b""
+
+    def _hold_turn(self) -> None:
+        if self._turn_running() and self._turn_cancellable:
+            assert self._turn is not None
+            log.info("you kept talking: waiting for the rest of the sentence")
+            self._turn.cancel()
+
+    def _start_turn(self) -> None:
+        self._hold_turn()
+        self._turn_cancellable = True
+        self._turn = asyncio.get_running_loop().create_task(self._speech_turn(self._audio))
+
+    async def _finish_turn(self) -> None:
+        if self._turn is not None:
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._turn
+            self._turn = None
+
+    async def _speech_turn(self, audio: bytes) -> None:
+        try:
+            await self._handle("speech", audio)
+        except asyncio.CancelledError:
+            self.call.rtp.stop_playback()  # the thinking tone
+            raise
+
     async def _handle(self, kind: str, value: Any) -> None:
         if kind == "digit":
             await self._on_digit(str(value))
@@ -239,8 +323,12 @@ class AssistantSession:
                 await self._say("Sorry, my speech recognition isn't working. You can use the keys.")
                 return
             log.info("heard: %r", text)
-            if not text:
+            if not text or _only_filler(text):
+                self._audio = b""  # "umm" alone: nothing to answer, nothing to keep
                 return
+            self._heard.append(text)
+            if not self.unlocked or self.confirm is not None:
+                self._commit()  # the code and confirmations are quick and deterministic
             if not self.unlocked:
                 code = extract_code(text)
                 if code:
@@ -271,7 +359,9 @@ class AssistantSession:
             log.exception("brain failed")
             reply = "Sorry, I'm having trouble thinking right now. Please try again in a moment."
         self.call.rtp.stop_playback()  # the earcon
+        self._commit()
         if reply:
+            self._said.append(reply)
             await self._say(reply)
         if self.confirm is not None:
             await self._say(self.confirm.prompt)
@@ -291,6 +381,10 @@ class AssistantSession:
         await asyncio.wait({played, ended}, return_when=asyncio.FIRST_COMPLETED)
         played.cancel()
         ended.cancel()
+
+    def _speech_started(self) -> None:
+        self._barge_in()
+        self.events.put_nowait(("speech_start", None))
 
     def _barge_in(self) -> None:
         if self.call.rtp.playing:
@@ -441,6 +535,34 @@ class AssistantSession:
                 )
 
     # -- tools -----------------------------------------------------------------------------
+
+    def _committing(self, tool: Tool) -> Tool:
+        async def run(args: dict[str, Any]) -> str:
+            self._commit()  # a tool has effects: this turn is no longer cancelled
+            return await tool.run(args)
+
+        return Tool(tool.name, tool.description, tool.parameters, run)
+
+    async def _summarize(self) -> None:
+        """Remember what this call was about, for the next calls."""
+        if self.personal is None or not self._heard or not self.remember_calls:
+            return
+        transcript = " | ".join(
+            [f"User: {h}" for h in self._heard[-30:]] + [f"You: {s}" for s in self._said[-10:]]
+        )[:6000]
+        try:
+            summary = await asyncio.wait_for(
+                self.brain.respond(
+                    "[The call has ended. Do not use any tools. In one to three sentences, "
+                    "summarize what the user talked about, asked for and decided, and anything "
+                    "useful to know in future calls. Reply with the summary only.]"
+                ),
+                30,
+            )
+        except Exception:
+            log.info("could not summarize the call; keeping its first words instead")
+            summary = transcript[:300]
+        self.personal.add_call_summary(summary)
 
     def _tools(self) -> list[Tool]:
         none: dict[str, Any] = {"type": "object", "properties": {}, "additionalProperties": False}

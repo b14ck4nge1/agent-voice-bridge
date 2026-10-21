@@ -18,6 +18,14 @@ With the assistant on, the call is a conversation instead of a keypad menu:
   Anything that needs a computer or the internet becomes a Claude Code task on your PC.
   Reminders and memories are stored on the server in `personal.json` (data volume).
 
+* **It remembers your calls.** At the end of each call it writes a short summary; the
+  last 10 are given to it at the start of the next call ("like we talked about
+  yesterday..."). Kept in `personal.json` with the reminders and memories.
+* **Pauses.** A pause or an "umm" doesn't cut you off: if you go on talking before it
+  answers, it drops the half-finished turn and listens to the whole sentence. "Umm" on
+  its own is ignored. `AVB_END_SILENCE` (default 1.0 s) sets how long a pause ends a
+  sentence: higher means fewer interruptions but slower replies.
+
 ## Safety
 
 * The brain can't approve anything. When you say "approve", it asks the system, and the

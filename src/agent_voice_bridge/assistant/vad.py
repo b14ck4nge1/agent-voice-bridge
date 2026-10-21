@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import array
 import math
+import os
 from collections.abc import Callable
 
 FRAME = 320  # bytes: 20 ms at 8 kHz, 16-bit
@@ -31,7 +32,7 @@ class Endpointer:
         min_level: float = 300.0,
         ratio: float = 3.0,
         start_frames: int = 4,
-        end_silence: float = 0.8,
+        end_silence: float | None = None,
         max_seconds: float = 30.0,
         pre_roll: float = 0.3,
     ) -> None:
@@ -42,6 +43,9 @@ class Endpointer:
         self.min_level = min_level
         self.ratio = ratio
         self.start_frames = start_frames
+        # How long a pause ends your sentence. Longer = fewer interruptions, slower replies.
+        if end_silence is None:
+            end_silence = float(os.environ.get("AVB_END_SILENCE", "1.0"))
         self.end_frames = int(end_silence / 0.02)
         self.max_frames = int(max_seconds / 0.02)
         self.pre_frames = int(pre_roll / 0.02)

@@ -26,6 +26,7 @@ log = logging.getLogger(__name__)
 
 MAX_MEMORIES = 100
 MAX_REMINDERS = 50
+MAX_CALLS = 10  # call summaries given to the brain
 
 
 def data_file() -> Path:
@@ -59,10 +60,12 @@ class PersonalStore:
         self._lock = threading.Lock()
         self.reminders: list[dict[str, Any]] = []
         self.memories: list[str] = []
+        self.calls: list[dict[str, str]] = []  # summaries of recent calls, oldest first
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
             self.reminders = list(data.get("reminders", []))
             self.memories = [str(m) for m in data.get("memories", [])]
+            self.calls = list(data.get("calls", []))
         except (OSError, ValueError, AttributeError):
             pass
 
@@ -71,7 +74,10 @@ class PersonalStore:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.path.with_suffix(".tmp")
             tmp.write_text(
-                json.dumps({"reminders": self.reminders, "memories": self.memories}, indent=1),
+                json.dumps(
+                    {"reminders": self.reminders, "memories": self.memories, "calls": self.calls},
+                    indent=1,
+                ),
                 encoding="utf-8",
             )
             tmp.replace(self.path)
@@ -131,6 +137,15 @@ class PersonalStore:
             self._save()
         return removed
 
+    # -- recent calls ---------------------------------------------------------------------------
+
+    def add_call_summary(self, summary: str) -> None:
+        summary = " ".join(summary.split())[:800]
+        if summary:
+            when = self.clock().astimezone(UTC).isoformat()
+            self.calls = (self.calls + [{"at": when, "summary": summary}])[-MAX_CALLS:]
+            self._save()
+
     # -- for the brain -------------------------------------------------------------------------
 
     def context(self) -> str:
@@ -141,6 +156,11 @@ class PersonalStore:
         ]
         if self.memories:
             lines.append("Things the user asked you to remember: " + " | ".join(self.memories))
+        if self.calls:
+            lines.append(
+                "Your recent calls with the user (oldest first): "
+                + " | ".join(f"{self.local(c['at'])}: {c['summary']}" for c in self.calls)
+            )
         if self.reminders:
             lines.append(
                 "Scheduled calls: "

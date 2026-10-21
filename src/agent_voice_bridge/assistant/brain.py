@@ -87,6 +87,15 @@ class AnthropicBrain:
         ]
 
     async def respond(self, text: str) -> str:
+        start = len(self.messages)
+        try:
+            return await self._respond(text)
+        except asyncio.CancelledError:
+            # You kept talking: forget this half-finished turn, it will be redone whole.
+            del self.messages[start:]
+            raise
+
+    async def _respond(self, text: str) -> str:
         self.messages.append({"role": "user", "content": text})
         spoken: list[str] = []
         for _ in range(MAX_TOOL_ROUNDS):
@@ -148,6 +157,15 @@ class OpenAIBrain:
         ]
 
     async def respond(self, text: str) -> str:
+        start = len(self.messages)
+        try:
+            return await self._respond(text)
+        except asyncio.CancelledError:
+            # You kept talking: forget this half-finished turn, it will be redone whole.
+            del self.messages[start:]
+            raise
+
+    async def _respond(self, text: str) -> str:
         self.messages.append({"role": "user", "content": text})
         spoken: list[str] = []
         for _ in range(MAX_TOOL_ROUNDS):

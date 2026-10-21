@@ -386,3 +386,82 @@ async def test_personal_assistant_schedules_a_call(service: ApprovalService, tmp
     assert [r["text"] for r in store.reminders] == ["check the oven"]
     call.ended.set()
     await asyncio.wait_for(task, 5)
+
+
+class RecordingSTT(FakeSTT):
+    def __init__(self) -> None:
+        super().__init__()
+        self.sizes: list[int] = []
+
+    async def transcribe(self, pcm16_8k: bytes) -> str:
+        self.sizes.append(len(pcm16_8k))
+        return await super().transcribe(pcm16_8k)
+
+
+async def test_pause_mid_sentence_is_joined_to_the_rest(service: ApprovalService) -> None:
+    gate = asyncio.Event()
+
+    async def slow(text: str, _: dict[str, Tool]) -> str:
+        await gate.wait()  # still "thinking" when the user goes on talking
+        return "Got it."
+
+    h = Harness(service, [say("Hello."), slow, say("Sure, the whole thing.")])
+    h.stt = RecordingSTT()
+    h.session.stt = h.stt
+    h.start()
+    await h.idle()
+    h.stt.lines += ["search for", "search for how refunds work"]
+    h.session.events.put_nowait(("speech", b"\x01\x00" * 1600))  # "search for... umm"
+    await h.idle()
+    h.session.events.put_nowait(("speech_start", None))  # ...keeps talking
+    await h.idle()
+    h.session.events.put_nowait(("speech", b"\x01\x00" * 800))
+    await h.idle()
+    heard = h.brains[0].heard
+    # The cut-off turn was dropped; the brain answered the whole sentence once.
+    assert heard[-1] == "search for how refunds work"
+    assert h.stt.sizes[-1] == 2 * (1600 + 800)  # both pieces of audio together
+    assert "Got it." not in h.tts.said and "Sure, the whole thing." in h.tts.said
+    gate.set()
+    await h.hang_up()
+
+
+async def test_filler_alone_is_ignored(service: ApprovalService) -> None:
+    h = Harness(service, [say("Hello."), say("unexpected")])
+    h.start()
+    await h.idle()
+    await h.speak("Umm...")
+    assert len(h.brains[0].heard) == 1 and "unexpected" not in h.tts.said
+    await h.hang_up()
+
+
+async def test_call_is_summarized_for_next_time(service: ApprovalService, tmp_path: Any) -> None:
+    from agent_voice_bridge.assistant.personal import PersonalStore
+
+    store = PersonalStore(tmp_path / "p.json")
+    steps = [say("Hi!"), say("Pizza sounds great."), say("Talked about dinner plans: pizza.")]
+
+    def factory(system: str, tools: list[Tool]) -> ScriptedBrain:
+        return ScriptedBrain(tools, steps)
+
+    call = FakeCall()
+    stt = FakeSTT()
+    session = AssistantSession(
+        call,  # type: ignore[arg-type]
+        service=service,
+        brain_factory=factory,  # type: ignore[arg-type]
+        stt=stt,
+        tts=FakeTTS(),  # type: ignore[arg-type]
+        hub=CallHub(),
+        personal=store,
+        idle_seconds=5,
+    )
+    task = asyncio.get_running_loop().create_task(session.run())
+    await asyncio.sleep(0.2)
+    stt.lines.append("I'm thinking of pizza tonight")
+    session.events.put_nowait(("speech", b"\x01\x00" * 1600))
+    await asyncio.sleep(0.2)
+    call.ended.set()
+    await asyncio.wait_for(task, 5)
+    assert store.calls[-1]["summary"] == "Talked about dinner plans: pizza."
+    assert "dinner plans" in PersonalStore(tmp_path / "p.json").context()

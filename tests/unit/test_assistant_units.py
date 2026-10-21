@@ -114,3 +114,24 @@ def test_endpointer_ignores_echo_while_talking() -> None:
     playing[0] = False
     ep.feed(_tone(1.0, 2000) + _tone(1.0, 40))
     assert len(got) == 1
+
+
+async def test_cancelled_turn_leaves_no_trace_in_history() -> None:
+    import asyncio
+
+    class Slow:
+        def __init__(self) -> None:
+            self.messages = self
+
+        async def create(self, **kw: Any) -> Any:
+            await asyncio.sleep(10)
+
+    brain = AnthropicBrain("sys", TOOLS, client=Slow())
+    task = asyncio.ensure_future(brain.respond("half a sentence"))
+    await asyncio.sleep(0.01)
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    assert brain.messages == []
